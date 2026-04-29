@@ -43,6 +43,19 @@ if 'selected_student' not in st.session_state:
     st.session_state.selected_student = None
 
 def show_login():
+    conn = get_db()
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )
+    tables = cursor.fetchall()
+    st.write("Tables:", tables)
+    
+    if tables:
+        cursor2 = conn.execute("PRAGMA table_info(Student)")
+        cols = cursor2.fetchall()
+        st.write("Student columns:", cols)
+    conn.close()
+    
     st.title("🎓 Student XAI Portal")
     st.subheader("Early Warning System")
     st.divider()
