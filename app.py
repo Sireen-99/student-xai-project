@@ -322,7 +322,7 @@ def show_instructor_home():
             else:
                 st.success(f"{row['risk']:.1%}")
         with col4:
-            if st.button("View", key=f"i_{row['student_id']}_{row['module_id']}"):
+         if st.button("View", key=f"i_{row['student_id']}_{row['module_id']}_{row['presentation']}"):
                 st.session_state.selected_student = row['student_id']
                 st.session_state.selected_module  = row['module_id']
                 st.session_state.page = 'instructor_student'
