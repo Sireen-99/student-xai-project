@@ -4,14 +4,24 @@ import pandas as pd
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
+import os 
 
 @st.cache_resource
 def load_model():
-    with open('model.pkl', 'rb') as f:
+    model_path = os.path.join(
+        os.path.dirname(__file__),
+        'model.pkl'
+    )
+    with open(model_path, 'rb') as f:
         return pickle.load(f)
 
+
 def get_db():
-    return sqlite3.connect('learning_analytics.db')
+    db_path = os.path.join(
+        os.path.dirname(__file__),
+        'learning_analytics.db'
+    )
+    return sqlite3.connect(db_path)
 
 model = load_model()
 
