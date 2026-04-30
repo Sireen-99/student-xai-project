@@ -168,7 +168,15 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
         return
 
     shap_vals = explainer.shap_values(fv)
-    sv = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
+
+    # نجيب SHAP values للـ class 1 (At-Risk) ونتأكد إنها 1D
+    if isinstance(shap_vals, list):
+        sv = np.array(shap_vals[1]).flatten()
+    else:
+        sv = np.array(shap_vals).flatten()
+
+    # لو الطول مش صح نأخذ أول 21 قيمة
+    sv = sv[:len(FEATURE_NAMES)]
 
     df_shap = pd.DataFrame({
         'Feature': [FEATURE_LABELS.get(f, f) for f in FEATURE_NAMES],
