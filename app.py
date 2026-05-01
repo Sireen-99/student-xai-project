@@ -250,126 +250,113 @@ def compute_risk(conn, student_id, module_id, presentation):
     return float(row[0]) if row else None
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
-# ── Plain-language templates — bilingual (AR + EN) ────────────────────────────
-# Format: (risk_ar, risk_en, protect_ar, protect_en)
-SHAP_EXPLAIN = {
-    'clicks_late':            ("نشاط منخفض في الأسابيع الأخيرة من المقرر",
-                               "Low activity in the final weeks",
-                               "تفاعل قوي في الأسابيع الأخيرة",
-                               "Strong engagement in the final weeks"),
-    'clicks_mid':             ("نشاط منخفض في منتصف الفصل",
-                               "Low activity in mid-course",
-                               "تفاعل منتظم في منتصف الفصل",
-                               "Consistent engagement in mid-course"),
-    'clicks_early':           ("نشاط منخفض في بداية المقرر",
-                               "Low activity at course start",
-                               "بداية قوية في التفاعل مع المنصة",
-                               "Good engagement at course start"),
-    'active_days_early':      ("أيام نشاط قليلة في المرحلة الأولى",
-                               "Few active days in early stage",
-                               "أيام نشاط كافية في المرحلة الأولى",
-                               "Good active days in early stage"),
-    'active_days_late':       ("أيام نشاط قليلة في نهاية الفصل",
-                               "Few active days toward course end",
-                               "أيام نشاط جيدة في نهاية الفصل",
-                               "Good active days toward course end"),
-    'active_days':            ("عدد الأيام النشطة منخفض بشكل عام",
-                               "Low overall active days",
-                               "عدد أيام نشاط مرتفع بشكل عام",
-                               "High overall active days"),
-    'total_clicks':           ("نشاط كلي منخفض على المنصة طوال الفصل",
-                               "Low total platform activity",
-                               "نشاط كلي مرتفع على المنصة",
-                               "High total platform activity"),
-    'avg_clicks_per_window':  ("متوسط نشاط منخفض لكل نافذة زمنية",
-                               "Low average activity per window",
-                               "متوسط نشاط مرتفع لكل نافذة زمنية",
-                               "High average activity per window"),
-    'trend_clicks':           ("اتجاه تراجعي في النشاط مع مرور الوقت",
-                               "Declining engagement trend",
-                               "اتجاه تصاعدي في النشاط مع الوقت",
-                               "Increasing engagement trend"),
-    'std_clicks':             ("نمط نشاط غير منتظم وغير ثابت",
-                               "Inconsistent activity pattern",
-                               "نمط نشاط منتظم وثابت",
-                               "Consistent activity pattern"),
-    'peak_clicks':            ("لم يكن هناك أي نافذة بنشاط مرتفع",
-                               "No high-activity window recorded",
-                               "كان هناك على الأقل فترة نشاط مرتفعة",
-                               "Had at least one very active period"),
-    'min_clicks':             ("بعض النوافذ الزمنية كانت بدون أي نشاط",
-                               "Some windows had almost no activity",
-                               "حافظ على حد أدنى من النشاط في كل النوافذ",
-                               "Maintained minimal activity throughout"),
-    'avg_score':              ("متوسط درجات منخفض في التقييمات",
-                               "Low average assessment score",
-                               "متوسط درجات مرتفع في التقييمات",
-                               "High average assessment score"),
-    'peak_score':             ("أعلى درجة حققها منخفضة",
-                               "Low peak score across assessments",
-                               "حقق درجة عالية في أحد التقييمات على الأقل",
-                               "Achieved a high score at least once"),
-    'score_std':              ("درجات غير ثابتة وتتذبذب كثيراً",
-                               "Inconsistent assessment scores",
-                               "درجات ثابتة ومتسقة عبر الفصل",
-                               "Consistent assessment scores"),
-    'score_early':            ("أداء ضعيف في التقييمات المبكرة",
-                               "Low performance in early assessments",
-                               "أداء قوي في التقييمات المبكرة",
-                               "Strong performance in early assessments"),
-    'score_late':             ("أداء ضعيف في التقييمات المتأخرة",
-                               "Low performance in late assessments",
-                               "أداء قوي في التقييمات المتأخرة",
-                               "Strong performance in late assessments"),
-    'score_trend':            ("تراجع الدرجات مقارنة بالبداية",
-                               "Declining scores vs early performance",
-                               "تحسن الدرجات مقارنة بالبداية",
-                               "Improving scores vs early performance"),
-    'score_trend_slope':      ("منحنى الدرجات سلبي على مدار الفصل",
-                               "Negative score trajectory",
-                               "منحنى الدرجات إيجابي على مدار الفصل",
-                               "Positive score trajectory"),
-    'num_assessments':        ("عدد التقييمات المقدمة منخفض",
-                               "Few assessments submitted",
-                               "التزام جيد بتقديم التقييمات",
-                               "Good assessment submission rate"),
-    'late_submissions':       ("عدة تسليمات متأخرة للواجبات",
-                               "Multiple late assignment submissions",
-                               "التزام بمواعيد تسليم الواجبات",
-                               "Assignments submitted on time"),
-    'prev_attempts_x_score':  ("محاولات متكررة مع درجات منخفضة",
-                               "Repeated attempts + low scores",
-                               "خبرة سابقة مع أداء أكاديمي قوي",
-                               "Prior experience + strong scores"),
-    'prev_attempts_x_clicks': ("محاولات متكررة مع تفاعل منخفض",
-                               "Repeated attempts + low engagement",
-                               "أعاد التسجيل مع تفاعل مرتفع",
-                               "Re-enrolled with high engagement"),
-    'num_of_prev_attempts':   ("محاولات سابقة متعددة للمقرر",
-                               "Multiple previous course attempts",
-                               "يخوض المقرر لأول مرة",
-                               "First attempt at this course"),
-    'studied_credits':        ("حمل دراسي ثقيل نسبة للأداء",
-                               "Heavy credit load vs performance",
-                               "الحمل الدراسي مناسب",
-                               "Credit load is manageable"),
-    'gender':                 ("عامل ديموغرافي — الجنس",
-                               "Demographic factor — gender",
-                               "عامل ديموغرافي — الجنس",
-                               "Demographic factor — gender"),
-    'age_band':               ("عامل ديموغرافي — الفئة العمرية",
-                               "Demographic factor — age group",
-                               "عامل ديموغرافي — الفئة العمرية",
-                               "Demographic factor — age group"),
-    'highest_education':      ("مستوى تعليمي سابق منخفض",
-                               "Lower prior education level",
-                               "مستوى تعليمي سابق مرتفع",
-                               "Higher prior education level"),
-    'code_module':            ("نمط خطر خاص بهذا المقرر",
-                               "Module-specific risk pattern",
-                               "نمط حماية خاص بهذا المقرر",
-                               "Module-specific protective pattern"),
+# ── Dynamic threshold-based SHAP explanation ─────────────────────────────────
+# الحدود المرجعية (من متوسطات الداتا)
+FEATURE_THRESHOLDS = {
+    'total_clicks':           1000,
+    'active_days':            30,
+    'avg_clicks_per_window':  50,
+    'clicks_early':           200,
+    'clicks_mid':             500,
+    'clicks_late':            400,
+    'active_days_early':      10,
+    'active_days_late':       8,
+    'avg_score':              60,
+    'peak_score':             70,
+    'score_early':            60,
+    'score_late':             60,
+    'score_trend':            0,
+    'score_trend_slope':      0,
+    'trend_clicks':           0,
+    'num_assessments':        3,
+    'late_submissions':       1,
+    'prev_attempts_x_score':  60,
+    'prev_attempts_x_clicks': 500,
+    'num_of_prev_attempts':   1,
+    'studied_credits':        60,
+    'std_clicks':             200,
+    'peak_clicks':            300,
+    'min_clicks':             50,
+    'score_std':              15,
 }
+
+# labels: (low_ar, low_en, high_ar, high_en)
+SHAP_LABELS = {
+    'clicks_late':            ("نشاط منخفض في الأسابيع الأخيرة",       "Low activity in final weeks",
+                               "نشاط مرتفع في الأسابيع الأخيرة",       "High activity in final weeks"),
+    'clicks_mid':             ("نشاط منخفض في منتصف الفصل",            "Low activity in mid-course",
+                               "نشاط مرتفع في منتصف الفصل",            "High activity in mid-course"),
+    'clicks_early':           ("نشاط منخفض في بداية الفصل",            "Low activity at course start",
+                               "نشاط مرتفع في بداية الفصل",            "High activity at course start"),
+    'total_clicks':           ("نشاط كلي منخفض على المنصة",            "Low total platform activity",
+                               "نشاط كلي مرتفع على المنصة",            "High total platform activity"),
+    'active_days':            ("أيام نشاط قليلة بشكل عام",             "Few overall active days",
+                               "أيام نشاط كثيرة بشكل عام",             "Many overall active days"),
+    'active_days_early':      ("أيام نشاط قليلة في البداية",           "Few active days early on",
+                               "أيام نشاط كافية في البداية",           "Good active days early on"),
+    'active_days_late':       ("أيام نشاط قليلة في النهاية",           "Few active days toward end",
+                               "أيام نشاط كافية في النهاية",           "Good active days toward end"),
+    'avg_clicks_per_window':  ("متوسط نشاط منخفض لكل نافذة",          "Low avg activity per window",
+                               "متوسط نشاط مرتفع لكل نافذة",          "High avg activity per window"),
+    'trend_clicks':           ("اتجاه تراجعي في النشاط",               "Declining engagement trend",
+                               "اتجاه تصاعدي في النشاط",               "Increasing engagement trend"),
+    'avg_score':              ("متوسط درجات منخفض",                    "Low average score",
+                               "متوسط درجات مرتفع",                    "High average score"),
+    'peak_score':             ("أعلى درجة منخفضة",                     "Low peak score",
+                               "أعلى درجة مرتفعة",                     "High peak score"),
+    'score_early':            ("أداء ضعيف في التقييمات المبكرة",        "Low early assessment scores",
+                               "أداء قوي في التقييمات المبكرة",        "High early assessment scores"),
+    'score_late':             ("أداء ضعيف في التقييمات المتأخرة",       "Low late assessment scores",
+                               "أداء قوي في التقييمات المتأخرة",       "High late assessment scores"),
+    'score_trend':            ("تراجع الدرجات مقارنة بالبداية",         "Scores declined vs early",
+                               "تحسن الدرجات مقارنة بالبداية",         "Scores improved vs early"),
+    'score_trend_slope':      ("منحنى الدرجات سلبي",                   "Negative score trajectory",
+                               "منحنى الدرجات إيجابي",                 "Positive score trajectory"),
+    'score_std':              ("درجات غير ثابتة ومتذبذبة",             "Inconsistent scores",
+                               "درجات ثابتة ومتسقة",                   "Consistent scores"),
+    'num_assessments':        ("عدد تقييمات مقدمة منخفض",              "Few assessments submitted",
+                               "عدد تقييمات مقدمة مرتفع",              "Many assessments submitted"),
+    'late_submissions':       ("تسليمات متأخرة متعددة",                "Multiple late submissions",
+                               "التزام بمواعيد التسليم",               "Submissions on time"),
+    'prev_attempts_x_score':  ("محاولات متكررة مع درجات منخفضة",        "Retakes + low scores",
+                               "محاولات متكررة مع درجات مرتفعة",       "Retakes + strong scores"),
+    'prev_attempts_x_clicks': ("محاولات متكررة مع تفاعل منخفض",        "Retakes + low engagement",
+                               "محاولات متكررة مع تفاعل مرتفع",        "Retakes + high engagement"),
+    'num_of_prev_attempts':   ("محاولات سابقة متعددة",                  "Multiple previous attempts",
+                               "أول محاولة للمقرر",                    "First attempt at course"),
+    'studied_credits':        ("حمل دراسي ثقيل",                       "Heavy credit load",
+                               "حمل دراسي مناسب",                      "Manageable credit load"),
+    'std_clicks':             ("نشاط غير منتظم ومتذبذب",               "Very inconsistent activity",
+                               "نشاط منتظم وثابت",                     "Consistent activity pattern"),
+    'peak_clicks':            ("لا توجد فترة نشاط مرتفع",              "No high-activity window",
+                               "فترة نشاط مرتفع موجودة",               "Had high-activity windows"),
+    'min_clicks':             ("بعض النوافذ بدون نشاط تقريباً",         "Some windows near-zero activity",
+                               "نشاط موجود حتى في أهدأ فترة",          "Activity even in quiet periods"),
+    'highest_education':      ("مستوى تعليمي سابق منخفض",              "Lower prior education",
+                               "مستوى تعليمي سابق مرتفع",              "Higher prior education"),
+    'code_module':            ("نمط خطر خاص بهذا المقرر",              "Module-specific risk pattern",
+                               "نمط حماية خاص بهذا المقرر",            "Module-specific protection"),
+    'age_band':               ("عامل ديموغرافي — الفئة العمرية",        "Demographic — age group",
+                               "عامل ديموغرافي — الفئة العمرية",        "Demographic — age group"),
+}
+
+def get_shap_text(feature_id, value):
+    """يرجع التفسير الصحيح بناءً على القيمة الفعلية مقارنة بالحد المرجعي"""
+    labels = SHAP_LABELS.get(feature_id)
+    if not labels:
+        return feature_id, feature_id
+    threshold = FEATURE_THRESHOLDS.get(feature_id, 0)
+    # late_submissions: أعلى = أسوأ
+    reverse_features = {'late_submissions', 'num_of_prev_attempts', 'std_clicks', 'score_std'}
+    if feature_id in reverse_features:
+        is_high = value > threshold
+    else:
+        is_high = value >= threshold
+    if is_high:
+        return labels[2], labels[3]   # high_ar, high_en
+    else:
+        return labels[0], labels[1]   # low_ar, low_en
+
 
 def show_shap_explanation(conn, student_id, module_id, presentation):
     fv, _ = build_feature_vector(conn, student_id, module_id, presentation)
@@ -434,11 +421,10 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
         st.markdown("**🔴 What is increasing this risk?**")
         if not top_risk.empty:
             for _, row in top_risk.iterrows():
-                fid  = row['FeatureID']
-                exp  = SHAP_EXPLAIN.get(fid, (row['Feature'], row['Feature'], '', ''))
-                ar   = exp[0]; en = exp[1]
-                val  = row['Value']
+                fid     = row['FeatureID']
+                val     = row['Value']
                 val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+                ar, en  = get_shap_text(fid, val)
                 st.error(
                     f"**{row['Feature']}** = `{val_str}`\n\n"
                     f"🇸🇦 {ar}\n\n"
@@ -451,11 +437,10 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
         st.markdown("**🟢 What is protecting this student?**")
         if not top_protect.empty:
             for _, row in top_protect.iterrows():
-                fid  = row['FeatureID']
-                exp  = SHAP_EXPLAIN.get(fid, ('', '', row['Feature'], row['Feature']))
-                ar   = exp[2]; en = exp[3]
-                val  = row['Value']
+                fid     = row['FeatureID']
+                val     = row['Value']
                 val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+                ar, en  = get_shap_text(fid, val)
                 st.success(
                     f"**{row['Feature']}** = `{val_str}`\n\n"
                     f"🇸🇦 {ar}\n\n"
