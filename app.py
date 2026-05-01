@@ -240,6 +240,15 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     return fv, perf_data
 
 
+# ─── Compute Risk من الموديل مباشرة (Longitudinal) ──────────────────────────
+def compute_risk(conn, student_id, module_id, presentation):
+    """يحسب الخطر من الموديل الجديد مباشرة بدل الداتابيس"""
+    fv, _ = build_feature_vector(conn, student_id, module_id, presentation)
+    if fv is None:
+        return None
+    proba = model.predict_proba(fv)[0]
+    return float(proba[1])   # احتمال At-Risk
+
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
 # ── Plain-language templates — bilingual (AR + EN) ────────────────────────────
 # Format: (risk_ar, risk_en, protect_ar, protect_en)
@@ -524,29 +533,20 @@ def show_student_home():
     for row in modules:
         module_id, presentation, final_result = row
         module_name = 'BBB' if module_id == 0 else 'FFF'
-        pred = conn.execute(f"""
-            SELECT p.risk_probability FROM Has_Prediction hp
-            JOIN Prediction p ON hp.prediction_id = p.prediction_id
-            JOIN Window w ON p.window_id = w.window_id
-            WHERE hp.{hp_sid} = {student_id}
-            AND hp.{hp_mid} = {module_id}
-            AND hp.presentation = '{presentation}'
-            ORDER BY w.window_number DESC LIMIT 1
-        """).fetchone()
+        risk = compute_risk(conn, student_id, module_id, presentation)
 
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             st.markdown(f"**{module_name}** - {presentation}")
             st.caption(f"Final result: {final_result}")
         with col2:
-            if pred:
-                risk = pred[0]
+            if risk is not None:
                 if risk >= 0.7:
-                    st.error(f"Risk: {risk:.1%}")
+                    st.error(f"🔴 Overall Risk: {risk:.1%}")
                 elif risk >= 0.5:
-                    st.warning(f"Risk: {risk:.1%}")
+                    st.warning(f"🟠 Overall Risk: {risk:.1%}")
                 else:
-                    st.success(f"Risk: {risk:.1%}")
+                    st.success(f"🟢 Overall Risk: {risk:.1%}")
         with col3:
             if st.button("View", key=f"v_{module_id}_{presentation}"):
                 st.session_state.selected_module       = module_id
@@ -588,15 +588,19 @@ def show_student_module():
         conn.close()
         return
 
-    latest_risk = predictions[-1][0]
     window_nums = [p[1] for p in predictions]
     risk_vals   = [p[0] for p in predictions]
+
+    # الخطر الكلي من الموديل الجديد (longitudinal)
+    overall_risk = compute_risk(conn, student_id, module_id, presentation)
+    if overall_risk is None:
+        overall_risk = predictions[-1][0]
 
     _, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        risk_badge(latest_risk)
+        risk_badge(overall_risk)
     if perf_data:
         with col2:
             st.metric("Assignments", int(perf_data['num_assessments']))
@@ -745,21 +749,13 @@ def show_instructor_home():
 
     risk_data = []
     for (sid,) in students:
-        pred = conn.execute(f"""
-            SELECT p.risk_probability FROM Has_Prediction hp
-            JOIN Prediction p ON hp.prediction_id = p.prediction_id
-            JOIN Window w ON p.window_id = w.window_id
-            WHERE hp.{hp_sid} = {sid}
-            AND hp.{hp_mid} = {sel_mid}
-            AND hp.presentation = '{sel_pres}'
-            ORDER BY w.window_number DESC LIMIT 1
-        """).fetchone()
-        if pred:
+        risk = compute_risk(conn, sid, sel_mid, sel_pres)
+        if risk is not None:
             risk_data.append({
                 'student_id':   sid,
                 'module_id':    sel_mid,
                 'presentation': sel_pres,
-                'risk':         pred[0]
+                'risk':         risk
             })
 
     if not risk_data:
@@ -842,15 +838,19 @@ def show_instructor_student():
         conn.close()
         return
 
-    latest_risk = predictions[-1][0]
     window_nums = [p[1] for p in predictions]
     risk_vals   = [p[0] for p in predictions]
+
+    # الخطر الكلي من الموديل الجديد (longitudinal)
+    overall_risk = compute_risk(conn, student_id, module_id, presentation)
+    if overall_risk is None:
+        overall_risk = predictions[-1][0]
 
     _, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        risk_badge(latest_risk)
+        risk_badge(overall_risk)
     if perf_data:
         with col2:
             st.metric("Assignments", int(perf_data['num_assessments']))
