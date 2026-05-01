@@ -717,10 +717,13 @@ def show_instructor_home():
         for i, (mid, pres) in enumerate(courses):
             module_name = 'BBB' if mid == 0 else 'FFF'
             count = conn.execute(f"""
-                SELECT COUNT(DISTINCT {sup_sid}) FROM Supervises
-                WHERE {sup_iid} = {instructor_id}
-                AND {sup_mid} = {mid}
-                AND presentation = '{pres}'
+                SELECT COUNT(DISTINCT hp.student_id)
+                FROM Has_Prediction hp
+                JOIN Supervises s ON hp.student_id = s.{sup_sid}
+                WHERE s.{sup_iid} = {instructor_id}
+                AND hp.module_id = {mid}
+                AND hp.presentation = '{pres}'
+                AND hp.longitudinal_risk IS NOT NULL
             """).fetchone()[0]
             with cols[i]:
                 st.markdown(f"""
