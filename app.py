@@ -9,7 +9,7 @@ import shap
 
 # ─── Feature names — Longitudinal Model (28 features) ────────────────────────
 FEATURE_NAMES = [
-    'code_module', 'gender', 'highest_education', 'age_band',
+    'code_module', 'highest_education', 'age_band',
     'num_of_prev_attempts', 'studied_credits',
     'total_clicks', 'active_days',
     'avg_clicks_per_window', 'std_clicks', 'peak_clicks', 'min_clicks', 'trend_clicks',
@@ -23,7 +23,6 @@ FEATURE_NAMES = [
 
 FEATURE_LABELS = {
     'code_module':             'Course Module',
-    'gender':                  'Gender',
     'highest_education':       'Education Level',
     'age_band':                'Age Group',
     'num_of_prev_attempts':    'Previous Attempts',
@@ -54,7 +53,7 @@ FEATURE_LABELS = {
 }
 
 # ─── Load model + explainer ───────────────────────────────────────────────────
-EXPECTED_N_FEATURES = 29   # الموديل الجديد Longitudinal
+EXPECTED_N_FEATURES = 28   # الموديل الجديد Longitudinal (بدون gender)
 
 @st.cache_resource
 def load_model():
@@ -199,7 +198,6 @@ def build_feature_vector(conn, student_id, module_id, presentation):
 
     fv = pd.DataFrame([{
         'code_module':             module_id,
-        'gender':                  gender,
         'highest_education':       highest_education,
         'age_band':                age_band,
         'num_of_prev_attempts':    num_of_prev_attempts,
@@ -240,14 +238,16 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     return fv, perf_data
 
 
-# ─── Compute Risk من الموديل مباشرة (Longitudinal) ──────────────────────────
+# ─── قراءة longitudinal_risk من الداتابيس ────────────────────────────────────
 def compute_risk(conn, student_id, module_id, presentation):
-    """يحسب الخطر من الموديل الجديد مباشرة بدل الداتابيس"""
-    fv, _ = build_feature_vector(conn, student_id, module_id, presentation)
-    if fv is None:
-        return None
-    proba = model.predict_proba(fv)[0]
-    return float(proba[1])   # احتمال At-Risk
+    """يقرأ الخطر المحسوب مسبقاً من الداتابيس"""
+    row = conn.execute("""
+        SELECT longitudinal_risk FROM Has_Prediction
+        WHERE student_id = ? AND module_id = ? AND presentation = ?
+        AND longitudinal_risk IS NOT NULL
+        LIMIT 1
+    """, (student_id, module_id, presentation)).fetchone()
+    return float(row[0]) if row else None
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
 # ── Plain-language templates — bilingual (AR + EN) ────────────────────────────
@@ -386,12 +386,16 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
 
     sv = sv[:len(FEATURE_NAMES)]
 
+    # نحذف الـ demographic features من العرض (موجودة في الموديل بس مش تعليمية)
+    EXCLUDE_FROM_DISPLAY = {'gender', 'age_band', 'code_module'}
+
     df_shap = pd.DataFrame({
         'Feature':  [FEATURE_LABELS.get(f, f) for f in FEATURE_NAMES],
         'FeatureID': FEATURE_NAMES,
         'SHAP':     sv,
         'Value':    fv.values[0],
     })
+    df_shap = df_shap[~df_shap['FeatureID'].isin(EXCLUDE_FROM_DISPLAY)]
     df_shap['abs'] = df_shap['SHAP'].abs()
     df_top = df_shap.nlargest(10, 'abs').sort_values('SHAP')
 
@@ -614,6 +618,10 @@ def show_student_module():
     # ── Risk Chart ──────────────────────────────────────────────────────────
     st.divider()
     st.subheader("📈 Risk over time (across all windows)")
+    st.caption(
+        "ℹ️ This chart shows per-window screening from the initial model. "
+        "The **Overall Risk** score above is computed using full longitudinal analysis across all windows."
+    )
     fig, ax = plt.subplots(figsize=(10, 3))
     colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
               for r in risk_vals]
@@ -864,6 +872,10 @@ def show_instructor_student():
     # ── Risk Chart ──────────────────────────────────────────────────────────
     st.divider()
     st.subheader("📈 Risk Trajectory (across all windows)")
+    st.caption(
+        "ℹ️ This chart shows per-window screening from the initial model. "
+        "The **Overall Risk** score above is computed using full longitudinal analysis across all windows."
+    )
     fig, ax = plt.subplots(figsize=(10, 3))
     colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
               for r in risk_vals]
