@@ -172,7 +172,8 @@ def compute_risk(conn, student_id, module_id, presentation):
         fv = fv[model_features].astype(float)
         return float(model.predict_proba(fv)[0][1])
     except Exception as e:
-        st.error(f"Debug — model_features: {model_features}\nfv columns: {list(fv.columns)}\nError: {e}")
+        csv_cols = list(features_df.columns)
+        st.error(f"Debug:\nmodel_features ({len(model_features)}): {model_features}\nCSV cols ({len(csv_cols)}): {csv_cols}\nError: {e}")
         return None
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
