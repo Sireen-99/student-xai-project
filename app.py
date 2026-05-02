@@ -655,33 +655,42 @@ def show_student_module():
 
     # ── Activity Chart ─────────────────────────────────────────────────────
     st.divider()
-    st.subheader("📊 Activity & Scores over time")
+    st.subheader("📈 Activity over time")
 
     wc = perf_data['window_clicks']
     ws = perf_data['window_scores']
     windows = list(range(1, 21))
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5))
-
     # Clicks chart
-    ax1.bar(windows, wc, color='#4A90D9', alpha=0.8)
-    ax1.set_ylabel('Clicks per window', fontsize=9)
-    ax1.set_title('Platform Activity (clicks every 2 weeks)', fontsize=10)
-    ax1.set_xticks(windows)
-
-    # Scores chart
-    scores_filtered = [s if s > 0 else None for s in ws]
-    ax2.plot(windows, scores_filtered, 'o-', color='#E24B4A', linewidth=2, markersize=5)
-    ax2.axhline(y=50, color='gray', linestyle='--', linewidth=1)
-    ax2.set_ylabel('Score', fontsize=9)
-    ax2.set_xlabel('Window (every 2 weeks)', fontsize=9)
-    ax2.set_title('Assessment Scores over time', fontsize=10)
-    ax2.set_xticks(windows)
-    ax2.set_ylim(0, 105)
-
+    fig, ax = plt.subplots(figsize=(10, 3))
+    colors = ['#E24B4A' if c == 0 else '#4A90D9' for c in wc]
+    ax.bar(windows, wc, color=colors)
+    ax.set_xlabel('Window (every 2 weeks)')
+    ax.set_ylabel('Clicks')
+    ax.set_title('Platform Activity per window  (red = no activity)')
+    ax.set_xticks(windows)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
+
+    # Scores chart — بس لو في درجات
+    if any(s > 0 for s in ws):
+        fig2, ax2 = plt.subplots(figsize=(10, 2.5))
+        score_windows = [w for w, s in zip(windows, ws) if s > 0]
+        score_vals    = [s for s in ws if s > 0]
+        ax2.plot(score_windows, score_vals, 'o-', color='#E24B4A',
+                 linewidth=2, markersize=6)
+        ax2.axhline(y=50, color='gray', linestyle='--', linewidth=1,
+                    label='Pass threshold (50)')
+        ax2.set_xlabel('Window (every 2 weeks)')
+        ax2.set_ylabel('Score')
+        ax2.set_title('Assessment Scores over time')
+        ax2.set_xticks(windows)
+        ax2.set_ylim(0, 105)
+        ax2.legend(fontsize=8)
+        plt.tight_layout()
+        st.pyplot(fig2)
+        plt.close()
 
     # ── SHAP Explanation ────────────────────────────────────────────────────
     st.divider()
@@ -937,31 +946,42 @@ def show_instructor_student():
 
     # ── Activity + Scores Charts ────────────────────────────────────────────
     st.divider()
-    st.subheader("📊 Activity & Scores over time")
+    st.subheader("📈 Activity over time")
 
     wc = perf_data['window_clicks']
     ws = perf_data['window_scores']
     windows = list(range(1, 21))
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5))
-
-    ax1.bar(windows, wc, color='#4A90D9', alpha=0.8)
-    ax1.set_ylabel('Clicks per window', fontsize=9)
-    ax1.set_title('Platform Activity (clicks every 2 weeks)', fontsize=10)
-    ax1.set_xticks(windows)
-
-    scores_filtered = [s if s > 0 else None for s in ws]
-    ax2.plot(windows, scores_filtered, 'o-', color='#E24B4A', linewidth=2, markersize=5)
-    ax2.axhline(y=50, color='gray', linestyle='--', linewidth=1)
-    ax2.set_ylabel('Score', fontsize=9)
-    ax2.set_xlabel('Window (every 2 weeks)', fontsize=9)
-    ax2.set_title('Assessment Scores over time', fontsize=10)
-    ax2.set_xticks(windows)
-    ax2.set_ylim(0, 105)
-
+    # Clicks chart
+    fig, ax = plt.subplots(figsize=(10, 3))
+    colors = ['#E24B4A' if c == 0 else '#4A90D9' for c in wc]
+    ax.bar(windows, wc, color=colors)
+    ax.set_xlabel('Window (every 2 weeks)')
+    ax.set_ylabel('Clicks')
+    ax.set_title('Platform Activity per window  (red = no activity)')
+    ax.set_xticks(windows)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
+
+    # Scores chart
+    if any(s > 0 for s in ws):
+        fig2, ax2 = plt.subplots(figsize=(10, 2.5))
+        score_windows = [w for w, s in zip(windows, ws) if s > 0]
+        score_vals    = [s for s in ws if s > 0]
+        ax2.plot(score_windows, score_vals, 'o-', color='#E24B4A',
+                 linewidth=2, markersize=6)
+        ax2.axhline(y=50, color='gray', linestyle='--', linewidth=1,
+                    label='Pass threshold (50)')
+        ax2.set_xlabel('Window (every 2 weeks)')
+        ax2.set_ylabel('Score')
+        ax2.set_title('Assessment Scores over time')
+        ax2.set_xticks(windows)
+        ax2.set_ylim(0, 105)
+        ax2.legend(fontsize=8)
+        plt.tight_layout()
+        st.pyplot(fig2)
+        plt.close()
 
     # ── SHAP ───────────────────────────────────────────────────────────────
     st.divider()
