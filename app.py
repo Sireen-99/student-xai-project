@@ -144,6 +144,7 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     except AttributeError:
         model_features = FEATURE_NAMES
     fv = pd.DataFrame([{f: r[f] for f in model_features if f in r.index}])
+    fv = fv.astype(float)
 
     perf_data = {
         'num_assessments':  int(r.get('num_assessments', 0)),
@@ -162,12 +163,12 @@ def compute_risk(conn, student_id, module_id, presentation):
     row = features_df[features_df['student_id'] == student_id]
     if row.empty:
         return None
-    # استخدم أسماء الـ features اللي الموديل اتدرب عليها بالضبط
     try:
         model_features = list(model.feature_names_in_)
     except AttributeError:
         model_features = FEATURE_NAMES
     fv = pd.DataFrame([{f: row.iloc[0][f] for f in model_features if f in row.columns}])
+    fv = fv.astype(float)
     return float(model.predict_proba(fv)[0][1])
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
