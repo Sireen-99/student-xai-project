@@ -568,18 +568,18 @@ def show_student_module():
         ORDER BY w.window_number
     """).fetchall()
 
-    if not predictions:
+    overall_risk = compute_risk(conn, student_id, module_id, presentation)
+    if overall_risk is None:
         st.info("No predictions available.")
         conn.close()
         return
 
-    window_nums = [p[1] for p in predictions]
-    risk_vals   = [p[0] for p in predictions]
-
-    # الخطر الكلي من الموديل الجديد (longitudinal)
-    overall_risk = compute_risk(conn, student_id, module_id, presentation)
-    if overall_risk is None:
-        overall_risk = predictions[-1][0]
+    if not predictions:
+        window_nums = list(range(1, 21))
+        risk_vals   = [overall_risk] * 20
+    else:
+        window_nums = [p[1] for p in predictions]
+        risk_vals   = [p[0] for p in predictions]
 
     _, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
 
@@ -825,18 +825,18 @@ def show_instructor_student():
         ORDER BY w.window_number
     """).fetchall()
 
-    if not predictions:
+    overall_risk = compute_risk(conn, student_id, module_id, presentation)
+    if overall_risk is None:
         st.info("No predictions available.")
         conn.close()
         return
 
-    window_nums = [p[1] for p in predictions]
-    risk_vals   = [p[0] for p in predictions]
-
-    # الخطر الكلي من الموديل الجديد (longitudinal)
-    overall_risk = compute_risk(conn, student_id, module_id, presentation)
-    if overall_risk is None:
-        overall_risk = predictions[-1][0]
+    if not predictions:
+        window_nums = list(range(1, 21))
+        risk_vals   = [overall_risk] * 20
+    else:
+        window_nums = [p[1] for p in predictions]
+        risk_vals   = [p[0] for p in predictions]
 
     _, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
 
