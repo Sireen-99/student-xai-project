@@ -658,22 +658,35 @@ def show_student_module():
     st.subheader("📈 Activity over time")
 
     wc = perf_data['window_clicks']
-    ws = perf_data['window_scores']
     windows = list(range(1, 21))
 
-    # Clicks chart
+    # نحول clicks لـ risk proxy: كلما قل النشاط = أحمر
+    max_clicks = max(wc) if max(wc) > 0 else 1
+    colors = []
+    for c in wc:
+        ratio = c / max_clicks
+        if ratio == 0:
+            colors.append('#E24B4A')    # أحمر = لا نشاط
+        elif ratio < 0.3:
+            colors.append('#EF9F27')    # أصفر = نشاط قليل
+        else:
+            colors.append('#639922')    # أخضر = نشاط جيد
+
     fig, ax = plt.subplots(figsize=(10, 3))
-    colors = ['#E24B4A' if c == 0 else '#4A90D9' for c in wc]
     ax.bar(windows, wc, color=colors)
+    ax.axhline(y=max_clicks * 0.3, color='black', linestyle='--',
+               linewidth=1, label='Low activity threshold')
     ax.set_xlabel('Window (every 2 weeks)')
-    ax.set_ylabel('Clicks')
-    ax.set_title('Platform Activity per window  (red = no activity)')
+    ax.set_ylabel('Clicks per window')
+    ax.set_title('Platform Activity per Window  🔴 No activity  🟡 Low  🟢 Good')
     ax.set_xticks(windows)
+    ax.legend(fontsize=8)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
 
     # Scores chart — بس لو في درجات
+    ws = perf_data['window_scores']
     if any(s > 0 for s in ws):
         fig2, ax2 = plt.subplots(figsize=(10, 2.5))
         score_windows = [w for w, s in zip(windows, ws) if s > 0]
@@ -952,19 +965,30 @@ def show_instructor_student():
     ws = perf_data['window_scores']
     windows = list(range(1, 21))
 
-    # Clicks chart
+    max_clicks = max(wc) if max(wc) > 0 else 1
+    colors = []
+    for c in wc:
+        ratio = c / max_clicks
+        if ratio == 0:
+            colors.append('#E24B4A')
+        elif ratio < 0.3:
+            colors.append('#EF9F27')
+        else:
+            colors.append('#639922')
+
     fig, ax = plt.subplots(figsize=(10, 3))
-    colors = ['#E24B4A' if c == 0 else '#4A90D9' for c in wc]
     ax.bar(windows, wc, color=colors)
+    ax.axhline(y=max_clicks * 0.3, color='black', linestyle='--',
+               linewidth=1, label='Low activity threshold')
     ax.set_xlabel('Window (every 2 weeks)')
-    ax.set_ylabel('Clicks')
-    ax.set_title('Platform Activity per window  (red = no activity)')
+    ax.set_ylabel('Clicks per window')
+    ax.set_title('Platform Activity per Window  🔴 No activity  🟡 Low  🟢 Good')
     ax.set_xticks(windows)
+    ax.legend(fontsize=8)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
 
-    # Scores chart
     if any(s > 0 for s in ws):
         fig2, ax2 = plt.subplots(figsize=(10, 2.5))
         score_windows = [w for w, s in zip(windows, ws) if s > 0]
