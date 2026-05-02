@@ -623,6 +623,34 @@ def show_student_module():
     # ── Recommendations ─────────────────────────────────────────────────────
     st.divider()
     st.subheader("💡 Your Recommendations")
+
+    _, perf = build_feature_vector(conn, student_id, module_id, presentation)
+    fv_row  = features_df[features_df['student_id'] == student_id]
+
+    if perf is not None and not fv_row.empty:
+        r = fv_row.iloc[0]
+        recs = []
+
+        if r.get('avg_score', 0) < 60:
+            recs.append("📚 Your average score is below 60% — consider revisiting course materials and seeking academic support.")
+        if r.get('clicks_late', 0) < 200:
+            recs.append("💻 Your platform activity is low in the final weeks — try to engage more regularly with course content.")
+        if r.get('score_trend', 0) < -5:
+            recs.append("📉 Your scores are declining — identify the topics you're struggling with and ask for help early.")
+        if r.get('late_submissions', 0) > 2:
+            recs.append("⏰ You have multiple late submissions — try to manage your time better and submit assignments on time.")
+        if r.get('num_assessments', 0) < 3:
+            recs.append("📝 You have submitted very few assessments — make sure to complete all required assignments.")
+        if r.get('active_days_late', 0) < 5:
+            recs.append("🔴 You have very few active days in the final stage — consistent engagement is key to success.")
+        if not recs:
+            recs.append("✅ Keep up the good work! Continue engaging with course materials regularly.")
+
+        st.markdown("**AI Recommendations:**")
+        for rec in recs:
+            st.info(rec)
+
+    # توصيات الدكتور من الداتابيس لو موجودة
     last_pred = conn.execute(f"""
         SELECT p.prediction_id FROM Has_Prediction hp
         JOIN Prediction p ON hp.prediction_id = p.prediction_id
@@ -634,19 +662,10 @@ def show_student_module():
     """).fetchone()
 
     if last_pred:
-        pred_id = last_pred[0]
-        ai_recs = conn.execute(
-            f"SELECT rec_text FROM AI_Recommendation WHERE prediction_id = {pred_id}"
-        ).fetchall()
-        if ai_recs:
-            st.markdown("**AI Recommendations:**")
-            for rec in ai_recs:
-                st.info(rec[0])
-
         doc_recs = conn.execute(f"""
             SELECT dr.rec_text, i.name FROM Doctor_Recommendation dr
             JOIN Instructor i ON dr.instructor_id = i.instructor_id
-            WHERE dr.prediction_id = {pred_id}
+            WHERE dr.prediction_id = {last_pred[0]}
         """).fetchall()
         if doc_recs:
             st.markdown("**Instructor Recommendations:**")
@@ -879,53 +898,75 @@ def show_instructor_student():
 
     # ── Recommendations + Doctor Notes ──────────────────────────────────────
     st.divider()
-    last_pred = conn.execute(f"""
-        SELECT p.prediction_id FROM Has_Prediction hp
-        JOIN Prediction p ON hp.prediction_id = p.prediction_id
-        JOIN Window w ON p.window_id = w.window_id
-        WHERE hp.{hp_sid} = {student_id}
-        AND hp.{hp_mid} = {module_id}
-        AND hp.presentation = '{presentation}'
-        ORDER BY w.window_number DESC LIMIT 1
-    """).fetchone()
 
-    if last_pred:
-        pred_id = last_pred[0]
+    # AI Recommendations من features الطالب
+    st.subheader("💡 AI Recommendations")
+    fv_row = features_df[features_df['student_id'] == student_id]
+    if not fv_row.empty:
+        r = fv_row.iloc[0]
+        recs = []
+        if r.get('avg_score', 0) < 60:
+            recs.append("📚 Student's average score is below 60% — academic intervention recommended.")
+        if r.get('clicks_late', 0) < 200:
+            recs.append("💻 Low platform activity in final weeks — consider reaching out to encourage engagement.")
+        if r.get('score_trend', 0) < -5:
+            recs.append("📉 Declining score trend — student may need targeted academic support.")
+        if r.get('late_submissions', 0) > 2:
+            recs.append("⏰ Multiple late submissions — discuss time management strategies with student.")
+        if r.get('num_assessments', 0) < 3:
+            recs.append("📝 Very few assessments submitted — follow up on missing work.")
+        if r.get('active_days_late', 0) < 5:
+            recs.append("🔴 Very few active days in final stage — student may have disengaged.")
+        if not recs:
+            recs.append("✅ Student appears to be on track — continue monitoring.")
+        for rec in recs:
+            st.info(rec)
 
-        st.subheader("💡 AI Recommendations")
-        ai_recs = conn.execute(
-            f"SELECT rec_text FROM AI_Recommendation WHERE prediction_id = {pred_id}"
-        ).fetchall()
-        for rec in ai_recs:
-            st.info(rec[0])
+    st.divider()
 
-        st.divider()
-        st.subheader("📝 Add your recommendation")
-        note = st.text_area("Write your note",
-                            placeholder="Enter your recommendation...")
-        if st.button("Save recommendation", use_container_width=True):
-            if note.strip():
-                note_clean = note.replace("'", "''")
-                conn.execute(f"""
-                    INSERT INTO Doctor_Recommendation
-                    (rec_text, rec_date, prediction_id, instructor_id)
-                    VALUES ('{note_clean}', '{pd.Timestamp.now().date()}',
-                            {pred_id}, {st.session_state.user_id})
-                """)
-                conn.commit()
-                st.success("Recommendation saved!")
-            else:
-                st.warning("Please write a recommendation first")
+    # توصية الدكتور — محفوظة بـ student_id مباشرة
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS Student_Note (
+                note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER, module_id INTEGER, presentation TEXT,
+                instructor_id INTEGER, note_text TEXT, note_date TEXT
+            )
+        """)
+        conn.commit()
+    except:
+        pass
 
-        doc_recs = conn.execute(f"""
-            SELECT rec_text, rec_date FROM Doctor_Recommendation
-            WHERE prediction_id = {pred_id}
-        """).fetchall()
-        if doc_recs:
-            st.subheader("Previous notes")
-            for rec in doc_recs:
-                st.success(rec[0])
-                st.caption(f"Date: {rec[1]}")
+    st.subheader("📝 Add Recommendation")
+    note = st.text_area("Write your note", placeholder="Enter your recommendation...")
+    if st.button("Save recommendation", use_container_width=True):
+        if note.strip():
+            note_clean = note.replace("'", "''")
+            conn.execute(f"""
+                INSERT INTO Student_Note
+                (student_id, module_id, presentation, instructor_id, note_text, note_date)
+                VALUES ({student_id}, {module_id}, '{presentation}',
+                        {st.session_state.user_id}, '{note_clean}',
+                        '{pd.Timestamp.now().date()}')
+            """)
+            conn.commit()
+            st.success("✅ Recommendation saved!")
+        else:
+            st.warning("Please write a recommendation first")
+
+    # عرض التوصيات السابقة
+    prev_notes = conn.execute(f"""
+        SELECT note_text, note_date FROM Student_Note
+        WHERE student_id = {student_id}
+        AND module_id = {module_id}
+        AND presentation = '{presentation}'
+        ORDER BY note_date DESC
+    """).fetchall()
+    if prev_notes:
+        st.subheader("Previous Notes")
+        for note in prev_notes:
+            st.success(note[0])
+            st.caption(f"Date: {note[1]}")
 
     conn.close()
 
