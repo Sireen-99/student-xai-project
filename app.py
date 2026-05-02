@@ -111,16 +111,15 @@ def risk_badge(risk):
     else:
         st.success(f"Current Risk: {risk:.1%}")
 
-# ─── بناء feature vector من الداتابيس ────────────────────────────────────────
+# ─── بناء feature vector longitudinal من الداتابيس ───────────────────────────
 def build_feature_vector(conn, student_id, module_id, presentation):
     hp_sid = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid = get_col(conn, 'Has_Prediction', 'module_id')
 
-    wp = conn.execute(f"""
-        SELECT wp.total_clicks, wp.active_days, wp.avg_clicks_per_day,
-               wp.forumng_clicks, wp.quiz_clicks, wp.resource_clicks,
-               wp.homepage_clicks, wp.avg_score, wp.max_score,
-               wp.num_assessments, wp.late_submissions, wp.avg_days_late
+    rows = conn.execute(f"""
+        SELECT w.window_number,
+               wp.total_clicks, wp.active_days, wp.avg_clicks_per_day,
+               wp.avg_score, wp.num_assessments, wp.late_submissions
         FROM Has_Prediction hp
         JOIN Prediction p ON hp.prediction_id = p.prediction_id
         JOIN Window_Performance wp ON wp.prediction_id = p.prediction_id
@@ -128,56 +127,96 @@ def build_feature_vector(conn, student_id, module_id, presentation):
         WHERE hp.{hp_sid} = {student_id}
         AND hp.{hp_mid} = {module_id}
         AND hp.presentation = '{presentation}'
-        ORDER BY w.window_number DESC LIMIT 1
-    """).fetchone()
+        ORDER BY w.window_number
+    """).fetchall()
 
     sid_col = get_col(conn, 'Student', 'student_id')
     st_row = conn.execute(f"""
-        SELECT gender, highest_education, age_band,
+        SELECT highest_education, age_band,
                num_of_prev_attempts, studied_credits
         FROM Student WHERE {sid_col} = {student_id}
     """).fetchone()
 
-    if not wp or not st_row:
+    if not rows or not st_row:
         return None, None
 
-    (total_clicks, active_days, avg_clicks_per_day,
-     forumng_clicks, quiz_clicks, resource_clicks,
-     homepage_clicks, avg_score, max_score,
-     num_assessments, late_submissions, avg_days_late) = wp
+    highest_education, age_band, num_of_prev_attempts, studied_credits = st_row
 
-    (gender, highest_education, age_band,
-     num_of_prev_attempts, studied_credits) = st_row
+    df = pd.DataFrame(rows, columns=[
+        'window_number','total_clicks','active_days','avg_clicks_per_window',
+        'avg_score','num_assessments','late_submissions'
+    ]).fillna(0)
+
+    early = df[df['window_number'] <= 3]
+    mid   = df[(df['window_number'] > 3) & (df['window_number'] <= 14)]
+    late  = df[df['window_number'] > 14]
+    n = len(df)
+    clicks_arr = df['total_clicks'].values.astype(float)
+    scores_arr = df['avg_score'].values.astype(float)
+
+    total_clicks          = float(df['total_clicks'].max())
+    active_days           = float(df['active_days'].max())
+    avg_clicks_per_window = float(df['total_clicks'].mean())
+    std_clicks            = float(df['total_clicks'].std()) if n>1 else 0.0
+    peak_clicks           = float(df['total_clicks'].max())
+    min_clicks            = float(df['total_clicks'].min())
+    trend_clicks          = float(np.polyfit(np.arange(n),clicks_arr,1)[0]) if n>1 else 0.0
+    clicks_early          = float(early['total_clicks'].max()) if len(early)>0 else 0.0
+    clicks_mid            = float(mid['total_clicks'].max()-early['total_clicks'].max()) if len(mid)>0 and len(early)>0 else 0.0
+    clicks_late           = float(late['total_clicks'].max()-mid['total_clicks'].max()) if len(late)>0 and len(mid)>0 else 0.0
+    active_days_early     = float(early['active_days'].max()) if len(early)>0 else 0.0
+    active_days_late      = float(late['active_days'].max()-mid['active_days'].max()) if len(late)>0 and len(mid)>0 else 0.0
+
+    avg_score         = float(df['avg_score'].mean())
+    peak_score        = float(df['avg_score'].max())
+    score_std         = float(df['avg_score'].std()) if n>1 else 0.0
+    num_assessments   = float(df['num_assessments'].max())
+    late_submissions  = float(df['late_submissions'].max())
+    score_early       = float(early['avg_score'].mean()) if len(early)>0 else 0.0
+    score_late        = float(late['avg_score'].mean())  if len(late)>0 else 0.0
+    score_trend       = score_late - score_early
+    score_trend_slope = float(np.polyfit(np.arange(n),scores_arr,1)[0]) if n>1 else 0.0
+    prev_attempts_x_score  = num_of_prev_attempts * avg_score
+    prev_attempts_x_clicks = num_of_prev_attempts * total_clicks
 
     fv = pd.DataFrame([{
-        'code_module':          module_id,
-        'gender':               gender,
-        'highest_education':    highest_education,
-        'age_band':             age_band,
-        'num_of_prev_attempts': num_of_prev_attempts,
-        'studied_credits':      studied_credits,
-        'total_clicks':         total_clicks or 0,
-        'active_days':          active_days or 0,
-        'avg_clicks_per_day':   avg_clicks_per_day or 0.0,
-        'forumng_clicks':       forumng_clicks or 0,
-        'oucontent_clicks':     0,
-        'resource_clicks':      resource_clicks or 0,
-        'url_clicks':           0,
-        'homepage_clicks':      homepage_clicks or 0,
-        'subpage_clicks':       0,
-        'quiz_clicks':          quiz_clicks or 0,
-        'avg_score':            avg_score or 0.0,
-        'max_score':            max_score or 0.0,
-        'num_assessments':      num_assessments or 0,
-        'late_submissions':     late_submissions or 0,
-        'avg_days_late':        avg_days_late or 0.0,
+        'code_module':             module_id,
+        'highest_education':       highest_education,
+        'age_band':                age_band,
+        'num_of_prev_attempts':    num_of_prev_attempts,
+        'studied_credits':         studied_credits,
+        'total_clicks':            total_clicks,
+        'active_days':             active_days,
+        'avg_clicks_per_window':   avg_clicks_per_window,
+        'std_clicks':              std_clicks,
+        'peak_clicks':             peak_clicks,
+        'min_clicks':              min_clicks,
+        'trend_clicks':            trend_clicks,
+        'clicks_early':            clicks_early,
+        'clicks_mid':              clicks_mid,
+        'clicks_late':             clicks_late,
+        'active_days_early':       active_days_early,
+        'active_days_late':        active_days_late,
+        'avg_score':               avg_score,
+        'peak_score':              peak_score,
+        'score_std':               score_std,
+        'num_assessments':         num_assessments,
+        'late_submissions':        late_submissions,
+        'score_early':             score_early,
+        'score_late':              score_late,
+        'score_trend':             score_trend,
+        'score_trend_slope':       score_trend_slope,
+        'prev_attempts_x_score':   prev_attempts_x_score,
+        'prev_attempts_x_clicks':  prev_attempts_x_clicks,
     }])[FEATURE_NAMES]
 
     perf_data = {
-        'num_assessments': num_assessments or 0,
-        'avg_score':        avg_score or 0.0,
-        'late_submissions': late_submissions or 0,
-        'active_days':      active_days or 0,
+        'num_assessments': int(num_assessments),
+        'avg_score':       avg_score,
+        'late_submissions': int(late_submissions),
+        'active_days':     int(active_days),
+        'score_trend':     score_trend,
+        'clicks_late':     clicks_late,
     }
     return fv, perf_data
 
