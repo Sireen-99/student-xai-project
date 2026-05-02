@@ -167,9 +167,13 @@ def compute_risk(conn, student_id, module_id, presentation):
         model_features = list(model.feature_names_in_)
     except AttributeError:
         model_features = FEATURE_NAMES
-    fv = pd.DataFrame([{f: row.iloc[0][f] for f in model_features if f in row.columns}])
-    fv = fv.astype(float)
-    return float(model.predict_proba(fv)[0][1])
+    try:
+        fv = pd.DataFrame([row.iloc[0][model_features].to_dict()])
+        fv = fv[model_features].astype(float)
+        return float(model.predict_proba(fv)[0][1])
+    except Exception as e:
+        st.error(f"Debug — model_features: {model_features}\nfv columns: {list(fv.columns)}\nError: {e}")
+        return None
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
 # ── Dynamic threshold-based SHAP explanation ─────────────────────────────────
