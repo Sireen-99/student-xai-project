@@ -91,13 +91,6 @@ def get_db():
 model     = load_model()
 explainer = load_explainer(model)
 
-@st.cache_data
-def load_features():
-    path = os.path.join(os.path.dirname(__file__), 'test_features.csv')
-    return pd.read_csv(path)
-
-features_df = load_features()
-
 st.set_page_config(page_title="Student XAI Portal", page_icon="🎓", layout="wide")
 
 # ─── Session state ────────────────────────────────────────────────────────────
@@ -133,58 +126,112 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     hp_sid = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid = get_col(conn, 'Has_Prediction', 'module_id')
 
-    # جيب features الطالب من CSV — محسوبة صح من raw data
-    row = features_df[features_df['student_id'] == student_id]
-    if row.empty:
+    rows = conn.execute(f"""
+        SELECT w.window_number,
+               wp.total_clicks, wp.active_days, wp.avg_clicks_per_day,
+               wp.avg_score, wp.num_assessments, wp.late_submissions
+        FROM Has_Prediction hp
+        JOIN Prediction p ON hp.prediction_id = p.prediction_id
+        JOIN Window_Performance wp ON wp.prediction_id = p.prediction_id
+        JOIN Window w ON p.window_id = w.window_id
+        WHERE hp.{hp_sid} = {student_id}
+        AND hp.{hp_mid} = {module_id}
+        AND hp.presentation = '{presentation}'
+        ORDER BY w.window_number
+    """).fetchall()
+
+    sid_col = get_col(conn, 'Student', 'student_id')
+    st_row = conn.execute(f"""
+        SELECT highest_education, age_band,
+               num_of_prev_attempts, studied_credits
+        FROM Student WHERE {sid_col} = {student_id}
+    """).fetchone()
+
+    if not rows or not st_row:
         return None, None
 
-    # استخدم أسماء الـ features اللي الموديل اتدرب عليها بالضبط
-    try:
-        model_features = list(model.feature_names_in_)
-    except AttributeError:
-        model_features = FEATURE_NAMES
-    r  = row.iloc[0]
-    fv_dict = {}
-    for f in model_features:
-        if f in r.index:
-            fv_dict[f] = r[f]
-        elif f == 'gender':
-            fv_dict[f] = 0
-        else:
-            fv_dict[f] = 0
-    fv = pd.DataFrame([fv_dict])[model_features].astype(float)
+    highest_education, age_band, num_of_prev_attempts, studied_credits = st_row
+
+    df = pd.DataFrame(rows, columns=[
+        'window_number','total_clicks','active_days','avg_clicks_per_window',
+        'avg_score','num_assessments','late_submissions'
+    ]).fillna(0)
+
+    early = df[df['window_number'] <= 3]
+    mid   = df[(df['window_number'] > 3) & (df['window_number'] <= 14)]
+    late  = df[df['window_number'] > 14]
+    clicks_arr = df['total_clicks'].values.astype(float)
+    scores_arr = df['avg_score'].values.astype(float)
+    n = len(df)
+
+    total_clicks          = float(df['total_clicks'].max())
+    active_days           = float(df['active_days'].max())
+    avg_clicks_per_window = float(df['total_clicks'].mean())
+    std_clicks            = float(df['total_clicks'].std()) if n>1 else 0.0
+    peak_clicks           = float(df['total_clicks'].max())
+    min_clicks            = float(df['total_clicks'].min())
+    trend_clicks          = float(np.polyfit(np.arange(n),clicks_arr,1)[0]) if n>1 else 0.0
+    clicks_early          = float(early['total_clicks'].max()) if len(early)>0 else 0.0
+    clicks_mid            = float(mid['total_clicks'].max()-early['total_clicks'].max()) if len(mid)>0 else 0.0
+    clicks_late           = float(late['total_clicks'].max()-mid['total_clicks'].max()) if len(late)>0 and len(mid)>0 else 0.0
+    active_days_early     = float(early['active_days'].max()) if len(early)>0 else 0.0
+    active_days_late      = float(late['active_days'].max()-mid['active_days'].max()) if len(late)>0 and len(mid)>0 else 0.0
+
+    avg_score         = float(df['avg_score'].mean())
+    peak_score        = float(df['avg_score'].max())
+    score_std         = float(df['avg_score'].std()) if n>1 else 0.0
+    num_assessments   = float(df['num_assessments'].max())
+    late_submissions  = float(df['late_submissions'].max())
+    score_early       = float(early['avg_score'].mean()) if len(early)>0 else 0.0
+    score_late        = float(late['avg_score'].mean())  if len(late)>0  else 0.0
+    score_trend       = score_late - score_early
+    score_trend_slope = float(np.polyfit(np.arange(n),scores_arr,1)[0]) if n>1 else 0.0
+    prev_attempts_x_score  = num_of_prev_attempts * avg_score
+    prev_attempts_x_clicks = num_of_prev_attempts * total_clicks
+
+    fv = pd.DataFrame([{
+        'code_module': module_id, 'highest_education': highest_education,
+        'age_band': age_band, 'num_of_prev_attempts': num_of_prev_attempts,
+        'studied_credits': studied_credits, 'total_clicks': total_clicks,
+        'active_days': active_days, 'avg_clicks_per_window': avg_clicks_per_window,
+        'std_clicks': std_clicks, 'peak_clicks': peak_clicks, 'min_clicks': min_clicks,
+        'trend_clicks': trend_clicks, 'clicks_early': clicks_early,
+        'clicks_mid': clicks_mid, 'clicks_late': clicks_late,
+        'active_days_early': active_days_early, 'active_days_late': active_days_late,
+        'avg_score': avg_score, 'peak_score': peak_score, 'score_std': score_std,
+        'num_assessments': num_assessments, 'late_submissions': late_submissions,
+        'score_early': score_early, 'score_late': score_late,
+        'score_trend': score_trend, 'score_trend_slope': score_trend_slope,
+        'prev_attempts_x_score': prev_attempts_x_score,
+        'prev_attempts_x_clicks': prev_attempts_x_clicks,
+    }])[FEATURE_NAMES]
 
     perf_data = {
-        'num_assessments':  int(r.get('num_assessments', 0)),
-        'avg_score':        float(r.get('avg_score', 0.0)),
-        'late_submissions': int(r.get('late_submissions', 0)),
-        'active_days':      int(r.get('active_days', 0)),
-        'score_trend':      float(r.get('score_trend', 0.0)),
-        'clicks_late':      float(r.get('clicks_late', 0.0)),
+        'num_assessments': int(num_assessments),
+        'avg_score': avg_score,
+        'late_submissions': int(late_submissions),
+        'active_days': int(active_days),
+        'score_trend': score_trend,
+        'clicks_late': clicks_late,
     }
     return fv, perf_data
 
 
 # ─── قراءة longitudinal_risk من الداتابيس ────────────────────────────────────
 def compute_risk(conn, student_id, module_id, presentation):
-    """يحسب الخطر من test_features.csv — نتيجة حقيقية من الموديل"""
-    row = features_df[features_df['student_id'] == student_id]
-    if row.empty:
+    """يقرأ longitudinal_risk من الداتابيس"""
+    row = conn.execute("""
+        SELECT longitudinal_risk FROM Has_Prediction
+        WHERE student_id = ? AND module_id = ? AND presentation = ?
+        AND longitudinal_risk IS NOT NULL
+        LIMIT 1
+    """, (student_id, module_id, presentation)).fetchone()
+    if row:
+        return float(row[0])
+    # fallback: احسب من الـ features
+    fv, _ = build_feature_vector(conn, student_id, module_id, presentation)
+    if fv is None:
         return None
-    try:
-        model_features = list(model.feature_names_in_)
-    except AttributeError:
-        model_features = FEATURE_NAMES
-    r = row.iloc[0]
-    fv_dict = {}
-    for f in model_features:
-        if f in r.index:
-            fv_dict[f] = r[f]
-        elif f == 'gender':
-            fv_dict[f] = 0   # قيمة افتراضية لو الموديل القديم
-        else:
-            fv_dict[f] = 0
-    fv = pd.DataFrame([fv_dict])[model_features].astype(float)
     return float(model.predict_proba(fv)[0][1])
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
