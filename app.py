@@ -143,8 +143,16 @@ def build_feature_vector(conn, student_id, module_id, presentation):
         model_features = list(model.feature_names_in_)
     except AttributeError:
         model_features = FEATURE_NAMES
-    fv = pd.DataFrame([{f: r[f] for f in model_features if f in r.index}])
-    fv = fv.astype(float)
+    r  = row.iloc[0]
+    fv_dict = {}
+    for f in model_features:
+        if f in r.index:
+            fv_dict[f] = r[f]
+        elif f == 'gender':
+            fv_dict[f] = 0
+        else:
+            fv_dict[f] = 0
+    fv = pd.DataFrame([fv_dict])[model_features].astype(float)
 
     perf_data = {
         'num_assessments':  int(r.get('num_assessments', 0)),
@@ -167,14 +175,17 @@ def compute_risk(conn, student_id, module_id, presentation):
         model_features = list(model.feature_names_in_)
     except AttributeError:
         model_features = FEATURE_NAMES
-    try:
-        fv = pd.DataFrame([row.iloc[0][model_features].to_dict()])
-        fv = fv[model_features].astype(float)
-        return float(model.predict_proba(fv)[0][1])
-    except Exception as e:
-        csv_cols = list(features_df.columns)
-        st.error(f"Debug:\nmodel_features ({len(model_features)}): {model_features}\nCSV cols ({len(csv_cols)}): {csv_cols}\nError: {e}")
-        return None
+    r = row.iloc[0]
+    fv_dict = {}
+    for f in model_features:
+        if f in r.index:
+            fv_dict[f] = r[f]
+        elif f == 'gender':
+            fv_dict[f] = 0   # قيمة افتراضية لو الموديل القديم
+        else:
+            fv_dict[f] = 0
+    fv = pd.DataFrame([fv_dict])[model_features].astype(float)
+    return float(model.predict_proba(fv)[0][1])
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
 # ── Dynamic threshold-based SHAP explanation ─────────────────────────────────
