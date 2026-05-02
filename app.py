@@ -314,164 +314,198 @@ def generate_recommendations(fv, perf_data):
     return recs
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
-SHAP_TEXT = {
-    'Late-Stage Activity (wks 29-40)': (
-        "نشاط منخفض في الأسابيع الأخيرة من المقرر",
-        "Low activity in final weeks of the course",
-        "نشاط مرتفع في الأسابيع الأخيرة من المقرر",
-        "Strong activity in the final weeks"
-    ),
-    'Mid-Stage Activity (wks 7-28)': (
-        "نشاط منخفض في منتصف الفصل",
-        "Low activity in mid-course",
-        "نشاط مرتفع في منتصف الفصل",
-        "Strong activity in mid-course"
-    ),
-    'Early-Stage Activity (wks 1-6)': (
-        "نشاط منخفض في بداية الفصل",
-        "Low activity at course start",
-        "نشاط مرتفع في بداية الفصل",
-        "Strong activity at course start"
-    ),
-    'Active Days - Late Stage': (
-        "أيام نشاط قليلة في نهاية الفصل",
-        "Few active days toward end of course",
-        "أيام نشاط جيدة في نهاية الفصل",
-        "Good active days toward end of course"
-    ),
-    'Active Days - Early Stage': (
-        "أيام نشاط قليلة في بداية الفصل",
-        "Few active days at start of course",
-        "أيام نشاط جيدة في بداية الفصل",
-        "Good active days at start of course"
-    ),
-    'Total Active Days': (
-        "عدد أيام نشاط منخفض طوال الفصل",
-        "Low total active days throughout course",
-        "عدد أيام نشاط مرتفع طوال الفصل",
-        "High total active days throughout course"
-    ),
-    'Total Platform Clicks': (
-        "تفاعل منخفض مع منصة التعلم",
-        "Low overall engagement with the platform",
-        "تفاعل مرتفع مع منصة التعلم",
-        "High overall engagement with the platform"
-    ),
-    'Activity Trend': (
-        "اتجاه تراجعي في النشاط مع مرور الوقت",
-        "Engagement declining over time",
-        "اتجاه تصاعدي في النشاط مع مرور الوقت",
-        "Engagement increasing over time"
-    ),
-    'Average Score': (
-        "متوسط درجات منخفض",
-        "Low average assessment score",
-        "متوسط درجات مرتفع",
-        "High average assessment score"
-    ),
-    'Highest Score Achieved': (
-        "أعلى درجة محققة منخفضة",
-        "Low peak assessment score",
-        "أعلى درجة محققة مرتفعة",
-        "High peak assessment score"
-    ),
-    'Score - Early Stage': (
-        "أداء ضعيف في تقييمات البداية",
-        "Weak performance in early assessments",
-        "أداء قوي في تقييمات البداية",
-        "Strong performance in early assessments"
-    ),
-    'Score - Late Stage': (
-        "أداء ضعيف في تقييمات النهاية",
-        "Weak performance in late assessments",
-        "أداء قوي في تقييمات النهاية",
-        "Strong performance in late assessments"
-    ),
-    'Score Trend (late - early)': (
-        "تراجع الدرجات مقارنة ببداية الفصل",
-        "Scores declined compared to early stage",
-        "تحسن الدرجات مقارنة ببداية الفصل",
-        "Scores improved compared to early stage"
-    ),
-    'Score Slope': (
-        "منحنى الدرجات سلبي خلال الفصل",
-        "Negative score trajectory across the course",
-        "منحنى الدرجات إيجابي خلال الفصل",
-        "Positive score trajectory across the course"
-    ),
-    'Score Consistency': (
-        "درجات غير منتظمة وغير ثابتة",
-        "Inconsistent and irregular scores",
-        "درجات منتظمة ومستقرة",
-        "Consistent and stable scores"
-    ),
-    'Assignments Submitted': (
-        "عدد قليل من التقييمات المقدمة",
-        "Few assignments submitted",
-        "عدد جيد من التقييمات المقدمة",
-        "Good number of assignments submitted"
-    ),
-    'Late Submissions': (
-        "تسليمات متأخرة تؤثر سلباً على الأداء",
-        "Late submissions negatively affecting performance",
-        "التزام بمواعيد تسليم الواجبات",
-        "Assignments submitted on time"
-    ),
-    'Retakes x Avg Score': (
-        "محاولات متكررة مع درجات منخفضة",
-        "Repeated attempts combined with low scores",
-        "محاولات متكررة مع درجات مرتفعة",
-        "Repeated attempts combined with strong scores"
-    ),
-    'Retakes x Total Clicks': (
-        "محاولات متكررة مع تفاعل منخفض",
-        "Repeated attempts combined with low engagement",
-        "محاولات متكررة مع تفاعل مرتفع",
-        "Repeated attempts combined with high engagement"
-    ),
-    'Previous Attempts': (
-        "عدة محاولات سابقة في هذا المقرر",
-        "Multiple previous attempts at this course",
-        "أول محاولة في هذا المقرر",
-        "First attempt at this course"
-    ),
-    'Education Level': (
-        "مستوى تعليمي سابق منخفض",
-        "Lower prior education level",
-        "مستوى تعليمي سابق مرتفع",
-        "Higher prior education level"
-    ),
-    'Course Module': (
-        "نمط خطر مرتبط بهذا المقرر",
-        "Risk pattern specific to this module",
-        "نمط حماية مرتبط بهذا المقرر",
-        "Protective pattern specific to this module"
-    ),
-    'Avg Clicks per Fortnight': (
-        "متوسط نشاط منخفض في كل نافذة",
-        "Low average activity per two-week window",
-        "متوسط نشاط مرتفع في كل نافذة",
-        "High average activity per two-week window"
-    ),
-    'Consistency of Clicks': (
-        "نشاط غير منتظم على المنصة",
-        "Irregular and inconsistent platform activity",
-        "نشاط منتظم ومتسق على المنصة",
-        "Regular and consistent platform activity"
-    ),
-    'Peak Activity': (
-        "أعلى نشاط محقق منخفض نسبياً",
-        "Peak activity level is relatively low",
-        "أعلى نشاط محقق مرتفع",
-        "High peak activity level achieved"
-    ),
-    'Minimum Activity': (
-        "أدنى نشاط خلال الفصل كان منخفضاً جداً",
-        "Minimum activity during course was very low",
-        "أدنى نشاط خلال الفصل كان معقولاً",
-        "Minimum activity during course was reasonable"
-    ),
-}
+def get_shap_context(feature_label, value, shap_val):
+    """تفسير ذكي يعتمد على القيمة الفعلية"""
+    v = float(value)
+    is_risk = shap_val > 0  # هل يزيد الخطر
+
+    contexts = {
+        'Late-Stage Activity (wks 29-40)': {
+            'unit': 'clicks',
+            'good': v >= 100,
+            'risk_ar':    f"نشاط منخفض جداً في آخر الفصل ({int(v)} ضغطة فقط)",
+            'risk_en':    f"Very low activity in final weeks — only {int(v)} clicks",
+            'safe_ar':    f"نشاط جيد في آخر الفصل ({int(v)} ضغطة)",
+            'safe_en':    f"Good engagement in final weeks — {int(v)} clicks",
+        },
+        'Mid-Stage Activity (wks 7-28)': {
+            'unit': 'clicks',
+            'good': v >= 300,
+            'risk_ar':    f"نشاط منخفض في منتصف الفصل ({int(v)} ضغطة)",
+            'risk_en':    f"Low engagement in mid-course — only {int(v)} clicks",
+            'safe_ar':    f"نشاط جيد في منتصف الفصل ({int(v)} ضغطة)",
+            'safe_en':    f"Strong engagement in mid-course — {int(v)} clicks",
+        },
+        'Early-Stage Activity (wks 1-6)': {
+            'unit': 'clicks',
+            'good': v >= 50,
+            'risk_ar':    f"نشاط منخفض في بداية الفصل ({int(v)} ضغطة)",
+            'risk_en':    f"Low activity at course start — only {int(v)} clicks",
+            'safe_ar':    f"نشاط جيد في بداية الفصل ({int(v)} ضغطة)",
+            'safe_en':    f"Good activity at course start — {int(v)} clicks",
+        },
+        'Active Days - Late Stage': {
+            'unit': 'days',
+            'good': v >= 10,
+            'risk_ar':    f"أيام نشاط قليلة في نهاية الفصل ({int(v)} يوم فقط)",
+            'risk_en':    f"Only {int(v)} active days in final weeks",
+            'safe_ar':    f"أيام نشاط كافية في نهاية الفصل ({int(v)} يوم)",
+            'safe_en':    f"{int(v)} active days toward end of course",
+        },
+        'Active Days - Early Stage': {
+            'unit': 'days',
+            'good': v >= 5,
+            'risk_ar':    f"أيام نشاط قليلة في البداية ({int(v)} يوم فقط)",
+            'risk_en':    f"Only {int(v)} active days in the first 6 weeks",
+            'safe_ar':    f"أيام نشاط جيدة في البداية ({int(v)} يوم)",
+            'safe_en':    f"{int(v)} active days in the first 6 weeks",
+        },
+        'Total Active Days': {
+            'unit': 'days',
+            'good': v >= 30,
+            'risk_ar':    f"عدد أيام نشاط منخفض طوال الفصل ({int(v)} يوم)",
+            'risk_en':    f"Only {int(v)} active days throughout the course",
+            'safe_ar':    f"عدد أيام نشاط جيد ({int(v)} يوم)",
+            'safe_en':    f"{int(v)} active days throughout the course",
+        },
+        'Total Platform Clicks': {
+            'unit': 'clicks',
+            'good': v >= 500,
+            'risk_ar':    f"تفاعل منخفض مع المنصة ({int(v)} ضغطة إجمالاً)",
+            'risk_en':    f"Low platform engagement — only {int(v)} total clicks",
+            'safe_ar':    f"تفاعل جيد مع المنصة ({int(v)} ضغطة إجمالاً)",
+            'safe_en':    f"Good platform engagement — {int(v)} total clicks",
+        },
+        'Activity Trend': {
+            'unit': '',
+            'good': v >= 0,
+            'risk_ar':    f"اتجاه تراجعي في النشاط (معدل التغيير: {v:.1f})",
+            'risk_en':    f"Declining engagement over time (slope: {v:.1f})",
+            'safe_ar':    f"اتجاه تصاعدي في النشاط (معدل التغيير: {v:.1f})",
+            'safe_en':    f"Increasing engagement over time (slope: {v:.1f})",
+        },
+        'Average Score': {
+            'unit': '%',
+            'good': v >= 60,
+            'risk_ar':    f"متوسط الدرجات منخفض ({v:.1f}%)",
+            'risk_en':    f"Low average score — {v:.1f}%",
+            'safe_ar':    f"متوسط الدرجات جيد ({v:.1f}%)",
+            'safe_en':    f"Good average score — {v:.1f}%",
+        },
+        'Highest Score Achieved': {
+            'unit': '%',
+            'good': v >= 70,
+            'risk_ar':    f"أعلى درجة محققة منخفضة ({v:.1f}%)",
+            'risk_en':    f"Low peak score — best was {v:.1f}%",
+            'safe_ar':    f"أعلى درجة محققة جيدة ({v:.1f}%)",
+            'safe_en':    f"Strong peak score — best was {v:.1f}%",
+        },
+        'Score - Early Stage': {
+            'unit': '%',
+            'good': v >= 60,
+            'risk_ar':    f"أداء ضعيف في تقييمات البداية ({v:.1f}%)",
+            'risk_en':    f"Weak early performance — {v:.1f}% average",
+            'safe_ar':    f"أداء جيد في تقييمات البداية ({v:.1f}%)",
+            'safe_en':    f"Strong early performance — {v:.1f}% average",
+        },
+        'Score - Late Stage': {
+            'unit': '%',
+            'good': v >= 60,
+            'risk_ar':    f"أداء ضعيف في تقييمات النهاية ({v:.1f}%)",
+            'risk_en':    f"Weak late performance — {v:.1f}% average",
+            'safe_ar':    f"أداء جيد في تقييمات النهاية ({v:.1f}%)",
+            'safe_en':    f"Strong late performance — {v:.1f}% average",
+        },
+        'Score Trend (late - early)': {
+            'unit': 'pts',
+            'good': v >= 0,
+            'risk_ar':    f"تراجع الدرجات بمقدار {abs(v):.1f} نقطة مقارنة بالبداية",
+            'risk_en':    f"Scores dropped by {abs(v):.1f} points compared to early stage",
+            'safe_ar':    f"تحسن الدرجات بمقدار {v:.1f} نقطة مقارنة بالبداية",
+            'safe_en':    f"Scores improved by {v:.1f} points compared to early stage",
+        },
+        'Score Slope': {
+            'unit': '',
+            'good': v >= 0,
+            'risk_ar':    f"منحنى الدرجات سلبي طوال الفصل (ميل: {v:.2f})",
+            'risk_en':    f"Negative score trajectory throughout course (slope: {v:.2f})",
+            'safe_ar':    f"منحنى الدرجات إيجابي طوال الفصل (ميل: {v:.2f})",
+            'safe_en':    f"Positive score trajectory throughout course (slope: {v:.2f})",
+        },
+        'Score Consistency': {
+            'unit': 'std',
+            'good': v <= 20,
+            'risk_ar':    f"درجات غير منتظمة (انحراف معياري: {v:.1f})",
+            'risk_en':    f"Inconsistent scores — std deviation: {v:.1f}",
+            'safe_ar':    f"درجات منتظمة ومتسقة (انحراف معياري: {v:.1f})",
+            'safe_en':    f"Consistent scores — std deviation: {v:.1f}",
+        },
+        'Assignments Submitted': {
+            'unit': 'assignments',
+            'good': v >= 5,
+            'risk_ar':    f"عدد قليل من الواجبات المقدمة ({int(v)} فقط)",
+            'risk_en':    f"Only {int(v)} assignments submitted",
+            'safe_ar':    f"عدد جيد من الواجبات المقدمة ({int(v)})",
+            'safe_en':    f"{int(v)} assignments submitted",
+        },
+        'Late Submissions': {
+            'unit': 'late',
+            'good': v == 0,
+            'risk_ar':    f"{int(v)} تسليمات متأخرة — يؤثر سلباً على الأداء",
+            'risk_en':    f"{int(v)} late submissions — affects performance",
+            'safe_ar':    f"لا تسليمات متأخرة — ملتزم بالمواعيد",
+            'safe_en':    f"No late submissions — good time management",
+        },
+        'Retakes x Avg Score': {
+            'unit': '',
+            'good': v >= 100,
+            'risk_ar':    f"محاولات متكررة مع درجات منخفضة (مؤشر: {v:.0f})",
+            'risk_en':    f"Repeated attempts with low scores (index: {v:.0f})",
+            'safe_ar':    f"محاولات سابقة مع أداء قوي (مؤشر: {v:.0f})",
+            'safe_en':    f"Previous attempts combined with strong scores (index: {v:.0f})",
+        },
+        'Retakes x Total Clicks': {
+            'unit': '',
+            'good': v >= 500,
+            'risk_ar':    f"محاولات متكررة مع تفاعل منخفض (مؤشر: {v:.0f})",
+            'risk_en':    f"Repeated attempts with low engagement (index: {v:.0f})",
+            'safe_ar':    f"محاولات سابقة مع تفاعل مرتفع (مؤشر: {v:.0f})",
+            'safe_en':    f"Previous attempts with high engagement (index: {v:.0f})",
+        },
+        'Previous Attempts': {
+            'unit': 'attempts',
+            'good': v == 0,
+            'risk_ar':    f"سجّل المقرر {int(v)} مرة سابقاً",
+            'risk_en':    f"Has taken this course {int(v)} time(s) before",
+            'safe_ar':    f"أول تسجيل في هذا المقرر",
+            'safe_en':    f"First attempt at this course",
+        },
+        'Avg Clicks per Fortnight': {
+            'unit': 'clicks/window',
+            'good': v >= 50,
+            'risk_ar':    f"متوسط نشاط منخفض في كل نافذة ({v:.0f} ضغطة/أسبوعين)",
+            'risk_en':    f"Low average activity per window — {v:.0f} clicks/fortnight",
+            'safe_ar':    f"متوسط نشاط جيد في كل نافذة ({v:.0f} ضغطة/أسبوعين)",
+            'safe_en':    f"Good average activity per window — {v:.0f} clicks/fortnight",
+        },
+    }
+
+    ctx = contexts.get(feature_label)
+    if ctx:
+        good = ctx['good']
+        if is_risk:
+            return {'ar': ctx['risk_ar'], 'en': ctx['risk_en']}
+        else:
+            return {'ar': ctx['safe_ar'], 'en': ctx['safe_en']}
+    else:
+        # تفسير افتراضي
+        if is_risk:
+            return {'ar': f"هذا العامل يزيد من احتمالية الخطر (القيمة: {v:.1f})",
+                    'en': f"This factor increases risk probability (value: {v:.1f})"}
+        else:
+            return {'ar': f"هذا العامل يحمي من الخطر (القيمة: {v:.1f})",
+                    'en': f"This factor reduces risk probability (value: {v:.1f})"}
+
 
 def show_shap_explanation(conn, student_id, module_id, presentation):
     fv, _ = build_feature_vector(conn, student_id, module_id, presentation)
@@ -531,8 +565,8 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
                 feat    = row['Feature']
                 val     = row['Value']
                 val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-                txt     = SHAP_TEXT.get(feat, (feat, feat, feat, feat))
-                st.error(f"**{feat}** = `{val_str}`\n\n{txt[0]}\n\n_{txt[1]}_")
+                ctx     = get_shap_context(feat, val, row['SHAP'])
+                st.error(f"**{feat}** = `{val_str}`\n\n{ctx['ar']}\n\n_{ctx['en']}_")
         else:
             st.info("No significant risk factors.")
 
@@ -543,8 +577,8 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
                 feat    = row['Feature']
                 val     = row['Value']
                 val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-                txt     = SHAP_TEXT.get(feat, (feat, feat, feat, feat))
-                st.success(f"**{feat}** = `{val_str}`\n\n{txt[2]}\n\n_{txt[3]}_")
+                ctx     = get_shap_context(feat, val, row['SHAP'])
+                st.success(f"**{feat}** = `{val_str}`\n\n{ctx['ar']}\n\n_{ctx['en']}_")
         else:
             st.warning("⚠️ No clear protective factors for this student.")
 
