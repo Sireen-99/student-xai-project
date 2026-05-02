@@ -138,8 +138,12 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     if row.empty:
         return None, None
 
-    r  = row.iloc[0]
-    fv = pd.DataFrame([{f: r[f] for f in FEATURE_NAMES if f in r.index}])
+    # استخدم أسماء الـ features اللي الموديل اتدرب عليها بالضبط
+    try:
+        model_features = list(model.feature_names_in_)
+    except AttributeError:
+        model_features = FEATURE_NAMES
+    fv = pd.DataFrame([{f: r[f] for f in model_features if f in r.index}])
 
     perf_data = {
         'num_assessments':  int(r.get('num_assessments', 0)),
@@ -158,7 +162,12 @@ def compute_risk(conn, student_id, module_id, presentation):
     row = features_df[features_df['student_id'] == student_id]
     if row.empty:
         return None
-    fv = pd.DataFrame([{f: row.iloc[0][f] for f in FEATURE_NAMES if f in row.columns}])
+    # استخدم أسماء الـ features اللي الموديل اتدرب عليها بالضبط
+    try:
+        model_features = list(model.feature_names_in_)
+    except AttributeError:
+        model_features = FEATURE_NAMES
+    fv = pd.DataFrame([{f: row.iloc[0][f] for f in model_features if f in row.columns}])
     return float(model.predict_proba(fv)[0][1])
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
