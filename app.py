@@ -272,21 +272,58 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
     st.pyplot(fig)
     plt.close()
 
-    # ── تفسير نصي ─────────────────────────────────────────────────────────
+    # ── تفسير نصي بألوان وعربي/إنجليزي ──────────────────────────────────────
+    SHAP_AR = {
+        'Late-Stage Activity (wks 29-40)': ("نشاط منخفض في الأسابيع الأخيرة", "نشاط مرتفع في الأسابيع الأخيرة"),
+        'Mid-Stage Activity (wks 7-28)':   ("نشاط منخفض في منتصف الفصل",      "نشاط مرتفع في منتصف الفصل"),
+        'Early-Stage Activity (wks 1-6)':  ("نشاط منخفض في بداية الفصل",      "نشاط مرتفع في بداية الفصل"),
+        'Active Days - Late Stage':         ("أيام نشاط قليلة في النهاية",      "أيام نشاط كافية في النهاية"),
+        'Active Days - Early Stage':        ("أيام نشاط قليلة في البداية",      "أيام نشاط كافية في البداية"),
+        'Total Active Days':               ("عدد أيام نشاط منخفض",             "عدد أيام نشاط مرتفع"),
+        'Total Platform Clicks':           ("نشاط كلي منخفض على المنصة",       "نشاط كلي مرتفع على المنصة"),
+        'Activity Trend (up/down)':        ("اتجاه تراجعي في النشاط",           "اتجاه تصاعدي في النشاط"),
+        'Average Score':                   ("متوسط درجات منخفض",               "متوسط درجات مرتفع"),
+        'Highest Score Achieved':          ("أعلى درجة منخفضة",                "أعلى درجة مرتفعة"),
+        'Score - Early Stage':             ("أداء ضعيف في البداية",             "أداء قوي في البداية"),
+        'Score - Late Stage':              ("أداء ضعيف في النهاية",             "أداء قوي في النهاية"),
+        'Score Trend (late - early)':      ("تراجع الدرجات مقارنة بالبداية",    "تحسن الدرجات مقارنة بالبداية"),
+        'Score Slope (regression)':        ("منحنى الدرجات سلبي",              "منحنى الدرجات إيجابي"),
+        'Score Consistency (std)':         ("درجات غير ثابتة",                  "درجات ثابتة ومتسقة"),
+        'Assignments Submitted':           ("عدد تقييمات منخفض",               "عدد تقييمات مرتفع"),
+        'Late Submissions':                ("تسليمات متأخرة متعددة",            "التزام بمواعيد التسليم"),
+        'Retakes x Avg Score':             ("محاولات متكررة مع درجات منخفضة",   "محاولات متكررة مع درجات مرتفعة"),
+        'Retakes x Total Clicks':          ("محاولات متكررة مع تفاعل منخفض",   "محاولات متكررة مع تفاعل مرتفع"),
+        'Previous Attempts':               ("محاولات سابقة متعددة",             "أول محاولة للمقرر"),
+        'Education Level':                 ("مستوى تعليمي سابق منخفض",          "مستوى تعليمي سابق مرتفع"),
+        'Course Module':                   ("نمط خطر خاص بالمقرر",              "نمط حماية خاص بالمقرر"),
+    }
+
     top_risk    = df_shap[df_shap['SHAP'] > 0].nlargest(3, 'SHAP')
     top_protect = df_shap[df_shap['SHAP'] < 0].nsmallest(3, 'SHAP')
 
     col1, col2 = st.columns(2)
     with col1:
+        st.markdown("**🔴 What is increasing this risk?**")
         if not top_risk.empty:
-            st.markdown("**🔴 Main risk factors:**")
             for _, row in top_risk.iterrows():
-                st.markdown(f"- **{row['Feature']}** &nbsp; *(impact: +{row['SHAP']:.3f})*")
+                feat = row['Feature']
+                val  = row['Value']
+                val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+                ar = SHAP_AR.get(feat, (feat, feat))[0]
+                st.error(f"**{feat}** = `{val_str}`\n\n🇸🇦 {ar}\n\n🇬🇧 _{ar}_")
+        else:
+            st.info("No significant risk factors.")
     with col2:
+        st.markdown("**🟢 What is protecting this student?**")
         if not top_protect.empty:
-            st.markdown("**🟢 Protective factors:**")
             for _, row in top_protect.iterrows():
-                st.markdown(f"- **{row['Feature']}** &nbsp; *(impact: {row['SHAP']:.3f})*")
+                feat = row['Feature']
+                val  = row['Value']
+                val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+                ar = SHAP_AR.get(feat, (feat, feat))[1]
+                st.success(f"**{feat}** = `{val_str}`\n\n🇸🇦 {ar}\n\n🇬🇧 _{ar}_")
+        else:
+            st.warning("⚠️ لا توجد عوامل حماية واضحة لهذا الطالب")
 
 # ─── Login ────────────────────────────────────────────────────────────────────
 def show_login():
@@ -374,16 +411,24 @@ def show_student_home():
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             st.markdown(f"**{module_name}** - {presentation}")
-            st.caption(f"Final result: {final_result}")
+            # النتيجة النهائية بلون
+            if final_result in ['Pass', 'Distinction']:
+                st.success(f"✅ Final Result: {final_result}")
+            elif final_result == 'Fail':
+                st.error(f"❌ Final Result: {final_result}")
+            else:
+                st.caption(f"Final result: {final_result}")
         with col2:
-            if pred:
+            risk = compute_risk(conn, student_id, module_id, presentation)
+            if risk is None and pred:
                 risk = pred[0]
+            if risk is not None:
                 if risk >= 0.7:
-                    st.error(f"Risk: {risk:.1%}")
+                    st.error(f"🔴 Overall Risk: {risk:.1%}")
                 elif risk >= 0.5:
-                    st.warning(f"Risk: {risk:.1%}")
+                    st.warning(f"🟠 Overall Risk: {risk:.1%}")
                 else:
-                    st.success(f"Risk: {risk:.1%}")
+                    st.success(f"🟢 Overall Risk: {risk:.1%}")
         with col3:
             if st.button("View", key=f"v_{module_id}_{presentation}"):
                 st.session_state.selected_module       = module_id
@@ -679,16 +724,42 @@ def show_instructor_student():
     window_nums = [p[1] for p in predictions]
     risk_vals   = [p[0] for p in predictions]
 
-    col1, col2, col3 = st.columns(3)
+    # النتيجة النهائية
+    sup_sid2 = get_col(conn, 'Supervises', 'student_id')
+    sup_mid2 = get_col(conn, 'Supervises', 'module_id')
+    final_result_row = conn.execute(f"""
+        SELECT final_result FROM Supervises
+        WHERE {sup_sid2} = {student_id}
+        AND {sup_mid2} = {module_id}
+        AND presentation = '{presentation}'
+        LIMIT 1
+    """).fetchone()
+    final_result = final_result_row[0] if final_result_row else 'N/A'
+
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         risk_badge(latest_risk)
+    with col2:
+        if final_result in ['Pass', 'Distinction']:
+            st.success(f"✅ {final_result}")
+        elif final_result == 'Fail':
+            st.error(f"❌ {final_result}")
+        elif final_result == 'Withdrawn':
+            st.warning(f"⚠️ Withdrawn")
+        else:
+            st.info(f"📋 {final_result}")
 
     _, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
     if perf_data:
-        with col2:
-            st.metric("Assignments", int(perf_data['num_assessments']))
         with col3:
             st.metric("Avg Score", f"{perf_data['avg_score']:.1f}%")
+        with col4:
+            trend = perf_data.get('score_trend', 0)
+            arrow = "📈" if trend > 0 else ("📉" if trend < 0 else "➡️")
+            st.metric("Score Trend", f"{arrow} {trend:+.1f}")
+        with col5:
+            late = int(perf_data.get('late_submissions', 0))
+            st.metric("Late Submissions", late)
 
     # ── Risk Chart ──────────────────────────────────────────────────────────
     st.divider()
