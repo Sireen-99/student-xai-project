@@ -273,29 +273,51 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
     plt.close()
 
     # ── تفسير نصي بألوان وعربي/إنجليزي ──────────────────────────────────────
-    SHAP_AR = {
-        'Late-Stage Activity (wks 29-40)': ("نشاط منخفض في الأسابيع الأخيرة", "نشاط مرتفع في الأسابيع الأخيرة"),
-        'Mid-Stage Activity (wks 7-28)':   ("نشاط منخفض في منتصف الفصل",      "نشاط مرتفع في منتصف الفصل"),
-        'Early-Stage Activity (wks 1-6)':  ("نشاط منخفض في بداية الفصل",      "نشاط مرتفع في بداية الفصل"),
-        'Active Days - Late Stage':         ("أيام نشاط قليلة في النهاية",      "أيام نشاط كافية في النهاية"),
-        'Active Days - Early Stage':        ("أيام نشاط قليلة في البداية",      "أيام نشاط كافية في البداية"),
-        'Total Active Days':               ("عدد أيام نشاط منخفض",             "عدد أيام نشاط مرتفع"),
-        'Total Platform Clicks':           ("نشاط كلي منخفض على المنصة",       "نشاط كلي مرتفع على المنصة"),
-        'Activity Trend (up/down)':        ("اتجاه تراجعي في النشاط",           "اتجاه تصاعدي في النشاط"),
-        'Average Score':                   ("متوسط درجات منخفض",               "متوسط درجات مرتفع"),
-        'Highest Score Achieved':          ("أعلى درجة منخفضة",                "أعلى درجة مرتفعة"),
-        'Score - Early Stage':             ("أداء ضعيف في البداية",             "أداء قوي في البداية"),
-        'Score - Late Stage':              ("أداء ضعيف في النهاية",             "أداء قوي في النهاية"),
-        'Score Trend (late - early)':      ("تراجع الدرجات مقارنة بالبداية",    "تحسن الدرجات مقارنة بالبداية"),
-        'Score Slope (regression)':        ("منحنى الدرجات سلبي",              "منحنى الدرجات إيجابي"),
-        'Score Consistency (std)':         ("درجات غير ثابتة",                  "درجات ثابتة ومتسقة"),
-        'Assignments Submitted':           ("عدد تقييمات منخفض",               "عدد تقييمات مرتفع"),
-        'Late Submissions':                ("تسليمات متأخرة متعددة",            "التزام بمواعيد التسليم"),
-        'Retakes x Avg Score':             ("محاولات متكررة مع درجات منخفضة",   "محاولات متكررة مع درجات مرتفعة"),
-        'Retakes x Total Clicks':          ("محاولات متكررة مع تفاعل منخفض",   "محاولات متكررة مع تفاعل مرتفع"),
-        'Previous Attempts':               ("محاولات سابقة متعددة",             "أول محاولة للمقرر"),
-        'Education Level':                 ("مستوى تعليمي سابق منخفض",          "مستوى تعليمي سابق مرتفع"),
-        'Course Module':                   ("نمط خطر خاص بالمقرر",              "نمط حماية خاص بالمقرر"),
+    SHAP_TEXT = {
+        'Late-Stage Activity (wks 29-40)': ("نشاط منخفض في الأسابيع الأخيرة",  "Low activity in final weeks",
+                                             "نشاط مرتفع في الأسابيع الأخيرة",   "High activity in final weeks"),
+        'Mid-Stage Activity (wks 7-28)':   ("نشاط منخفض في منتصف الفصل",       "Low activity in mid-course",
+                                             "نشاط مرتفع في منتصف الفصل",        "High activity in mid-course"),
+        'Early-Stage Activity (wks 1-6)':  ("نشاط منخفض في بداية الفصل",       "Low activity at course start",
+                                             "نشاط مرتفع في بداية الفصل",        "High activity at course start"),
+        'Active Days - Late Stage':         ("أيام نشاط قليلة في النهاية",       "Few active days toward end",
+                                             "أيام نشاط كافية في النهاية",        "Good active days toward end"),
+        'Active Days - Early Stage':        ("أيام نشاط قليلة في البداية",       "Few active days early on",
+                                             "أيام نشاط كافية في البداية",        "Good active days early on"),
+        'Total Active Days':               ("عدد أيام نشاط منخفض",              "Low overall active days",
+                                             "عدد أيام نشاط مرتفع",               "High overall active days"),
+        'Total Platform Clicks':           ("نشاط كلي منخفض على المنصة",        "Low total platform activity",
+                                             "نشاط كلي مرتفع على المنصة",         "High total platform activity"),
+        'Activity Trend (up/down)':        ("اتجاه تراجعي في النشاط",            "Declining engagement trend",
+                                             "اتجاه تصاعدي في النشاط",            "Increasing engagement trend"),
+        'Average Score':                   ("متوسط درجات منخفض",                "Low average score",
+                                             "متوسط درجات مرتفع",                 "High average score"),
+        'Highest Score Achieved':          ("أعلى درجة منخفضة",                 "Low peak score",
+                                             "أعلى درجة مرتفعة",                  "High peak score"),
+        'Score - Early Stage':             ("أداء ضعيف في البداية",              "Low early assessment scores",
+                                             "أداء قوي في البداية",               "Strong early assessment scores"),
+        'Score - Late Stage':              ("أداء ضعيف في النهاية",              "Low late assessment scores",
+                                             "أداء قوي في النهاية",               "Strong late assessment scores"),
+        'Score Trend (late - early)':      ("تراجع الدرجات مقارنة بالبداية",     "Scores declined vs early stage",
+                                             "تحسن الدرجات مقارنة بالبداية",      "Scores improved vs early stage"),
+        'Score Slope (regression)':        ("منحنى الدرجات سلبي",               "Negative score trajectory",
+                                             "منحنى الدرجات إيجابي",              "Positive score trajectory"),
+        'Score Consistency (std)':         ("درجات غير ثابتة",                   "Inconsistent assessment scores",
+                                             "درجات ثابتة ومتسقة",                "Consistent assessment scores"),
+        'Assignments Submitted':           ("عدد تقييمات مقدمة منخفض",           "Few assessments submitted",
+                                             "عدد تقييمات مقدمة مرتفع",            "Many assessments submitted"),
+        'Late Submissions':                ("تسليمات متأخرة متعددة",             "Multiple late submissions",
+                                             "التزام بمواعيد التسليم",             "Assignments submitted on time"),
+        'Retakes x Avg Score':             ("محاولات متكررة مع درجات منخفضة",    "Retakes combined with low scores",
+                                             "محاولات متكررة مع درجات مرتفعة",    "Retakes combined with strong scores"),
+        'Retakes x Total Clicks':          ("محاولات متكررة مع تفاعل منخفض",    "Retakes combined with low engagement",
+                                             "محاولات متكررة مع تفاعل مرتفع",     "Retakes combined with high engagement"),
+        'Previous Attempts':               ("محاولات سابقة متعددة",              "Multiple previous course attempts",
+                                             "أول محاولة للمقرر",                 "First attempt at this course"),
+        'Education Level':                 ("مستوى تعليمي سابق منخفض",           "Lower prior education level",
+                                             "مستوى تعليمي سابق مرتفع",           "Higher prior education level"),
+        'Course Module':                   ("نمط خطر خاص بالمقرر",               "Module-specific risk pattern",
+                                             "نمط حماية خاص بالمقرر",             "Module-specific protective pattern"),
     }
 
     top_risk    = df_shap[df_shap['SHAP'] > 0].nlargest(3, 'SHAP')
@@ -306,22 +328,24 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
         st.markdown("**🔴 What is increasing this risk?**")
         if not top_risk.empty:
             for _, row in top_risk.iterrows():
-                feat = row['Feature']
-                val  = row['Value']
+                feat    = row['Feature']
+                val     = row['Value']
                 val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-                ar = SHAP_AR.get(feat, (feat, feat))[0]
-                st.error(f"**{feat}** = `{val_str}`\n\n🇸🇦 {ar}\n\n🇬🇧 _{ar}_")
+                txt     = SHAP_TEXT.get(feat, (feat, feat, feat, feat))
+                ar, en  = txt[0], txt[1]
+                st.error(f"**{feat}** = `{val_str}`\n\n{ar}\n\n_{en}_")
         else:
             st.info("No significant risk factors.")
     with col2:
         st.markdown("**🟢 What is protecting this student?**")
         if not top_protect.empty:
             for _, row in top_protect.iterrows():
-                feat = row['Feature']
-                val  = row['Value']
+                feat    = row['Feature']
+                val     = row['Value']
                 val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-                ar = SHAP_AR.get(feat, (feat, feat))[1]
-                st.success(f"**{feat}** = `{val_str}`\n\n🇸🇦 {ar}\n\n🇬🇧 _{ar}_")
+                txt     = SHAP_TEXT.get(feat, (feat, feat, feat, feat))
+                ar, en  = txt[2], txt[3]
+                st.success(f"**{feat}** = `{val_str}`\n\n{ar}\n\n_{en}_")
         else:
             st.warning("⚠️ لا توجد عوامل حماية واضحة لهذا الطالب")
 
