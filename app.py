@@ -215,57 +215,6 @@ def build_feature_vector(conn, student_id, module_id, presentation):
         'window_clicks':   wc,
         'window_scores':   ws,
     }
-    # حساب risk per-window
-    window_risks = []
-    for i in range(20):
-        # بيانات تراكمية حتى النافذة i
-        wc_cumul = wc_arr[:i+1]
-        ws_cumul = ws_arr[:i+1]
-        n_w = i + 1
-
-        c_total = float(wc_cumul.sum())
-        c_early = float(wc_arr[:min(3, n_w)].sum())
-        c_mid   = float(wc_arr[3:min(14, n_w)].sum())
-        c_late  = float(wc_arr[14:n_w].sum())
-        a_total = int(np.count_nonzero(wc_cumul))
-        a_early = int(np.count_nonzero(wc_arr[:min(3, n_w)]))
-        a_late  = int(np.count_nonzero(wc_arr[14:n_w]))
-        p_clk   = float(wc_cumul.max())
-        m_clk   = float(wc_cumul.min())
-        avg_c   = float(wc_cumul.mean())
-        std_c   = float(wc_cumul.std()) if n_w > 1 else 0.0
-        tr_c    = float(np.polyfit(range(n_w), wc_cumul, 1)[0]) if n_w > 1 else 0.0
-
-        ws_nz   = ws_arr[:n_w][ws_arr[:n_w] > 0]
-        s_all   = float(ws_nz.mean()) if len(ws_nz) > 0 else 0.0
-        s_early = float(ws_arr[:min(3,n_w)][ws_arr[:min(3,n_w)]>0].mean()) if len(ws_arr[:min(3,n_w)][ws_arr[:min(3,n_w)]>0]) > 0 else 0.0
-        s_late  = float(ws_arr[14:n_w][ws_arr[14:n_w]>0].mean()) if len(ws_arr[14:n_w][ws_arr[14:n_w]>0]) > 0 else 0.0
-        s_trend = round(s_late - s_early, 2)
-        n_ass   = int(np.count_nonzero(ws_arr[:n_w]))
-        p_scr   = float(ws_arr[:n_w].max())
-        s_std   = float(ws_arr[:n_w].std()) if n_w > 1 else 0.0
-        s_slp   = float(np.polyfit(range(n_w), ws_arr[:n_w], 1)[0]) if n_w > 1 else 0.0
-
-        fv_w = pd.DataFrame([{
-            'code_module': module_id, 'highest_education': highest_education,
-            'age_band': age_band, 'num_of_prev_attempts': prev_att,
-            'studied_credits': studied_credits,
-            'total_clicks': c_total, 'active_days': a_total,
-            'avg_clicks_per_window': avg_c, 'std_clicks': std_c,
-            'peak_clicks': p_clk, 'min_clicks': m_clk, 'trend_clicks': tr_c,
-            'clicks_early': c_early, 'clicks_mid': c_mid, 'clicks_late': c_late,
-            'active_days_early': a_early, 'active_days_late': a_late,
-            'avg_score': s_all, 'peak_score': p_scr, 'score_std': s_std,
-            'num_assessments': n_ass, 'late_submissions': 0,
-            'score_early': s_early, 'score_late': s_late,
-            'score_trend': s_trend, 'score_trend_slope': s_slp,
-            'prev_attempts_x_score': prev_att * s_all,
-            'prev_attempts_x_clicks': prev_att * c_total,
-        }])[FEATURE_NAMES]
-        window_risks.append(float(model.predict_proba(fv_w)[0][1]))
-
-    perf_data['window_risks'] = window_risks
-
     return fv, perf_data
 
 # ─── توليد التوصيات من features ───────────────────────────────────────────────
@@ -741,30 +690,36 @@ def show_student_module():
     # ── Risk Chart per window ───────────────────────────────────────────────
     st.divider()
     st.subheader("📈 Risk over time")
+    st.caption("ℹ️ Risk score per two-week window based on cumulative student data.")
 
-    window_risks = perf_data.get('window_risks', [])
-    windows = list(range(1, 21))
+    predictions = conn.execute(f"""
+        SELECT p.risk_probability, w.window_number FROM Has_Prediction hp
+        JOIN Prediction p ON hp.prediction_id = p.prediction_id
+        JOIN Window w ON p.window_id = w.window_id
+        WHERE hp.{hp_sid} = {student_id}
+        AND hp.{hp_mid} = {module_id}
+        AND hp.presentation = '{presentation}'
+        ORDER BY w.window_number
+    """).fetchall()
 
-    fig, ax = plt.subplots(figsize=(10, 3))
-    colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
-              for r in window_risks]
-    ax.bar(windows, window_risks, color=colors)
-    ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1,
-               label='Risk threshold (50%)')
-    ax.set_xlabel('Window (every 2 weeks)')
-    ax.set_ylabel('Risk probability')
-    ax.set_ylim(0, 1)
-    ax.set_xticks(windows)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
-    ax.legend(fontsize=9)
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
-
-    # ── SHAP Explanation ────────────────────────────────────────────────────
-    st.divider()
-    st.subheader("🔍 Why this prediction?")
-    st.caption("Factors that most influenced your overall risk score.")
+    if predictions:
+        window_nums = [p[1] for p in predictions]
+        risk_vals   = [p[0] for p in predictions]
+        fig, ax = plt.subplots(figsize=(10, 3))
+        colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
+                  for r in risk_vals]
+        ax.bar(window_nums, risk_vals, color=colors)
+        ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1,
+                   label='Risk threshold (50%)')
+        ax.set_xlabel('Window (every 2 weeks)')
+        ax.set_ylabel('Risk probability')
+        ax.set_ylim(0, 1)
+        ax.set_xticks(window_nums)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
+        ax.legend(fontsize=9)
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
     show_shap_explanation(conn, student_id, module_id, presentation)
 
     # ── Recommendations ─────────────────────────────────────────────────────
@@ -1016,25 +971,36 @@ def show_instructor_student():
     # ── Risk Chart per window ───────────────────────────────────────────────
     st.divider()
     st.subheader("📈 Risk over time")
+    st.caption("ℹ️ Risk score per two-week window based on cumulative student data.")
 
-    window_risks = perf_data.get('window_risks', [])
-    windows = list(range(1, 21))
+    predictions = conn.execute(f"""
+        SELECT p.risk_probability, w.window_number FROM Has_Prediction hp
+        JOIN Prediction p ON hp.prediction_id = p.prediction_id
+        JOIN Window w ON p.window_id = w.window_id
+        WHERE hp.{hp_sid} = {student_id}
+        AND hp.{hp_mid} = {module_id}
+        AND hp.presentation = '{presentation}'
+        ORDER BY w.window_number
+    """).fetchall()
 
-    fig, ax = plt.subplots(figsize=(10, 3))
-    colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
-              for r in window_risks]
-    ax.bar(windows, window_risks, color=colors)
-    ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1,
-               label='Risk threshold (50%)')
-    ax.set_xlabel('Window (every 2 weeks)')
-    ax.set_ylabel('Risk probability')
-    ax.set_ylim(0, 1)
-    ax.set_xticks(windows)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
-    ax.legend(fontsize=9)
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
+    if predictions:
+        window_nums = [p[1] for p in predictions]
+        risk_vals   = [p[0] for p in predictions]
+        fig, ax = plt.subplots(figsize=(10, 3))
+        colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
+                  for r in risk_vals]
+        ax.bar(window_nums, risk_vals, color=colors)
+        ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1,
+                   label='Risk threshold (50%)')
+        ax.set_xlabel('Window (every 2 weeks)')
+        ax.set_ylabel('Risk probability')
+        ax.set_ylim(0, 1)
+        ax.set_xticks(window_nums)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
+        ax.legend(fontsize=9)
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
 
     # ── SHAP ───────────────────────────────────────────────────────────────
     st.divider()
