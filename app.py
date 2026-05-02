@@ -215,6 +215,57 @@ def build_feature_vector(conn, student_id, module_id, presentation):
         'window_clicks':   wc,
         'window_scores':   ws,
     }
+    # حساب risk per-window
+    window_risks = []
+    for i in range(20):
+        # بيانات تراكمية حتى النافذة i
+        wc_cumul = wc_arr[:i+1]
+        ws_cumul = ws_arr[:i+1]
+        n_w = i + 1
+
+        c_total = float(wc_cumul.sum())
+        c_early = float(wc_arr[:min(3, n_w)].sum())
+        c_mid   = float(wc_arr[3:min(14, n_w)].sum())
+        c_late  = float(wc_arr[14:n_w].sum())
+        a_total = int(np.count_nonzero(wc_cumul))
+        a_early = int(np.count_nonzero(wc_arr[:min(3, n_w)]))
+        a_late  = int(np.count_nonzero(wc_arr[14:n_w]))
+        p_clk   = float(wc_cumul.max())
+        m_clk   = float(wc_cumul.min())
+        avg_c   = float(wc_cumul.mean())
+        std_c   = float(wc_cumul.std()) if n_w > 1 else 0.0
+        tr_c    = float(np.polyfit(range(n_w), wc_cumul, 1)[0]) if n_w > 1 else 0.0
+
+        ws_nz   = ws_arr[:n_w][ws_arr[:n_w] > 0]
+        s_all   = float(ws_nz.mean()) if len(ws_nz) > 0 else 0.0
+        s_early = float(ws_arr[:min(3,n_w)][ws_arr[:min(3,n_w)]>0].mean()) if len(ws_arr[:min(3,n_w)][ws_arr[:min(3,n_w)]>0]) > 0 else 0.0
+        s_late  = float(ws_arr[14:n_w][ws_arr[14:n_w]>0].mean()) if len(ws_arr[14:n_w][ws_arr[14:n_w]>0]) > 0 else 0.0
+        s_trend = round(s_late - s_early, 2)
+        n_ass   = int(np.count_nonzero(ws_arr[:n_w]))
+        p_scr   = float(ws_arr[:n_w].max())
+        s_std   = float(ws_arr[:n_w].std()) if n_w > 1 else 0.0
+        s_slp   = float(np.polyfit(range(n_w), ws_arr[:n_w], 1)[0]) if n_w > 1 else 0.0
+
+        fv_w = pd.DataFrame([{
+            'code_module': module_id, 'highest_education': highest_education,
+            'age_band': age_band, 'num_of_prev_attempts': prev_att,
+            'studied_credits': studied_credits,
+            'total_clicks': c_total, 'active_days': a_total,
+            'avg_clicks_per_window': avg_c, 'std_clicks': std_c,
+            'peak_clicks': p_clk, 'min_clicks': m_clk, 'trend_clicks': tr_c,
+            'clicks_early': c_early, 'clicks_mid': c_mid, 'clicks_late': c_late,
+            'active_days_early': a_early, 'active_days_late': a_late,
+            'avg_score': s_all, 'peak_score': p_scr, 'score_std': s_std,
+            'num_assessments': n_ass, 'late_submissions': 0,
+            'score_early': s_early, 'score_late': s_late,
+            'score_trend': s_trend, 'score_trend_slope': s_slp,
+            'prev_attempts_x_score': prev_att * s_all,
+            'prev_attempts_x_clicks': prev_att * c_total,
+        }])[FEATURE_NAMES]
+        window_risks.append(float(model.predict_proba(fv_w)[0][1]))
+
+    perf_data['window_risks'] = window_risks
+
     return fv, perf_data
 
 # ─── توليد التوصيات من features ───────────────────────────────────────────────
@@ -653,57 +704,28 @@ def show_student_module():
     with col3:
         st.metric("Avg Score", f"{perf_data['avg_score']:.1f}%")
 
-    # ── Activity Chart ─────────────────────────────────────────────────────
+    # ── Risk Chart per window ───────────────────────────────────────────────
     st.divider()
-    st.subheader("📈 Activity over time")
+    st.subheader("📈 Risk over time")
 
-    wc = perf_data['window_clicks']
+    window_risks = perf_data.get('window_risks', [])
     windows = list(range(1, 21))
 
-    # نحول clicks لـ risk proxy: كلما قل النشاط = أحمر
-    max_clicks = max(wc) if max(wc) > 0 else 1
-    colors = []
-    for c in wc:
-        ratio = c / max_clicks
-        if ratio == 0:
-            colors.append('#E24B4A')    # أحمر = لا نشاط
-        elif ratio < 0.3:
-            colors.append('#EF9F27')    # أصفر = نشاط قليل
-        else:
-            colors.append('#639922')    # أخضر = نشاط جيد
-
     fig, ax = plt.subplots(figsize=(10, 3))
-    ax.bar(windows, wc, color=colors)
-    ax.axhline(y=max_clicks * 0.3, color='black', linestyle='--',
-               linewidth=1, label='Low activity threshold')
+    colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
+              for r in window_risks]
+    ax.bar(windows, window_risks, color=colors)
+    ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1,
+               label='Risk threshold (50%)')
     ax.set_xlabel('Window (every 2 weeks)')
-    ax.set_ylabel('Clicks per window')
-    ax.set_title('Platform Activity per Window  🔴 No activity  🟡 Low  🟢 Good')
+    ax.set_ylabel('Risk probability')
+    ax.set_ylim(0, 1)
     ax.set_xticks(windows)
-    ax.legend(fontsize=8)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
+    ax.legend(fontsize=9)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
-
-    # Scores chart — بس لو في درجات
-    ws = perf_data['window_scores']
-    if any(s > 0 for s in ws):
-        fig2, ax2 = plt.subplots(figsize=(10, 2.5))
-        score_windows = [w for w, s in zip(windows, ws) if s > 0]
-        score_vals    = [s for s in ws if s > 0]
-        ax2.plot(score_windows, score_vals, 'o-', color='#E24B4A',
-                 linewidth=2, markersize=6)
-        ax2.axhline(y=50, color='gray', linestyle='--', linewidth=1,
-                    label='Pass threshold (50)')
-        ax2.set_xlabel('Window (every 2 weeks)')
-        ax2.set_ylabel('Score')
-        ax2.set_title('Assessment Scores over time')
-        ax2.set_xticks(windows)
-        ax2.set_ylim(0, 105)
-        ax2.legend(fontsize=8)
-        plt.tight_layout()
-        st.pyplot(fig2)
-        plt.close()
 
     # ── SHAP Explanation ────────────────────────────────────────────────────
     st.divider()
@@ -957,55 +979,28 @@ def show_instructor_student():
     with col5:
         st.metric("Assignments", int(perf_data['num_assessments']))
 
-    # ── Activity + Scores Charts ────────────────────────────────────────────
+    # ── Risk Chart per window ───────────────────────────────────────────────
     st.divider()
-    st.subheader("📈 Activity over time")
+    st.subheader("📈 Risk over time")
 
-    wc = perf_data['window_clicks']
-    ws = perf_data['window_scores']
+    window_risks = perf_data.get('window_risks', [])
     windows = list(range(1, 21))
 
-    max_clicks = max(wc) if max(wc) > 0 else 1
-    colors = []
-    for c in wc:
-        ratio = c / max_clicks
-        if ratio == 0:
-            colors.append('#E24B4A')
-        elif ratio < 0.3:
-            colors.append('#EF9F27')
-        else:
-            colors.append('#639922')
-
     fig, ax = plt.subplots(figsize=(10, 3))
-    ax.bar(windows, wc, color=colors)
-    ax.axhline(y=max_clicks * 0.3, color='black', linestyle='--',
-               linewidth=1, label='Low activity threshold')
+    colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
+              for r in window_risks]
+    ax.bar(windows, window_risks, color=colors)
+    ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1,
+               label='Risk threshold (50%)')
     ax.set_xlabel('Window (every 2 weeks)')
-    ax.set_ylabel('Clicks per window')
-    ax.set_title('Platform Activity per Window  🔴 No activity  🟡 Low  🟢 Good')
+    ax.set_ylabel('Risk probability')
+    ax.set_ylim(0, 1)
     ax.set_xticks(windows)
-    ax.legend(fontsize=8)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0%}'))
+    ax.legend(fontsize=9)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
-
-    if any(s > 0 for s in ws):
-        fig2, ax2 = plt.subplots(figsize=(10, 2.5))
-        score_windows = [w for w, s in zip(windows, ws) if s > 0]
-        score_vals    = [s for s in ws if s > 0]
-        ax2.plot(score_windows, score_vals, 'o-', color='#E24B4A',
-                 linewidth=2, markersize=6)
-        ax2.axhline(y=50, color='gray', linestyle='--', linewidth=1,
-                    label='Pass threshold (50)')
-        ax2.set_xlabel('Window (every 2 weeks)')
-        ax2.set_ylabel('Score')
-        ax2.set_title('Assessment Scores over time')
-        ax2.set_xticks(windows)
-        ax2.set_ylim(0, 105)
-        ax2.legend(fontsize=8)
-        plt.tight_layout()
-        st.pyplot(fig2)
-        plt.close()
 
     # ── SHAP ───────────────────────────────────────────────────────────────
     st.divider()
