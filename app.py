@@ -91,6 +91,13 @@ def get_db():
 model     = load_model()
 explainer = load_explainer(model)
 
+@st.cache_data
+def load_features():
+    path = os.path.join(os.path.dirname(__file__), 'test_features.csv')
+    return pd.read_csv(path)
+
+features_df = load_features()
+
 st.set_page_config(page_title="Student XAI Portal", page_icon="🎓", layout="wide")
 
 # ─── Session state ────────────────────────────────────────────────────────────
@@ -126,128 +133,33 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     hp_sid = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid = get_col(conn, 'Has_Prediction', 'module_id')
 
-    # جيب كل النوافذ مرتبة (مش آخر نافذة بس)
-    rows = conn.execute(f"""
-        SELECT w.window_number,
-               wp.total_clicks, wp.active_days, wp.avg_clicks_per_day,
-               wp.avg_score, wp.num_assessments, wp.late_submissions
-        FROM Has_Prediction hp
-        JOIN Prediction p ON hp.prediction_id = p.prediction_id
-        JOIN Window_Performance wp ON wp.prediction_id = p.prediction_id
-        JOIN Window w ON p.window_id = w.window_id
-        WHERE hp.{hp_sid} = {student_id}
-        AND hp.{hp_mid} = {module_id}
-        AND hp.presentation = '{presentation}'
-        ORDER BY w.window_number
-    """).fetchall()
-
-    sid_col = get_col(conn, 'Student', 'student_id')
-    st_row = conn.execute(f"""
-        SELECT gender, highest_education, age_band,
-               num_of_prev_attempts, studied_credits
-        FROM Student WHERE {sid_col} = {student_id}
-    """).fetchone()
-
-    if not rows or not st_row:
+    # جيب features الطالب من CSV — محسوبة صح من raw data
+    row = features_df[features_df['student_id'] == student_id]
+    if row.empty:
         return None, None
 
-    gender, highest_education, age_band, num_of_prev_attempts, studied_credits = st_row
-
-    df = pd.DataFrame(rows, columns=[
-        'window_number', 'total_clicks', 'active_days', 'avg_clicks_per_window',
-        'avg_score', 'num_assessments', 'late_submissions'
-    ]).fillna(0)
-
-    # تقسيم النوافذ: early (1-3), mid (4-14), late (15-20)
-    early = df[df['window_number'] <= 3]
-    mid   = df[(df['window_number'] > 3) & (df['window_number'] <= 14)]
-    late  = df[df['window_number'] > 14]
-
-    clicks_arr = df['total_clicks'].values.astype(float)
-    scores_arr = df['avg_score'].values.astype(float)
-    n = len(df)
-
-    # ── Click features ─────────────────────────────────────────────────────
-    total_clicks          = float(df['total_clicks'].sum())
-    active_days           = float(df['active_days'].sum())
-    avg_clicks_per_window = float(df['total_clicks'].mean())
-    std_clicks            = float(df['total_clicks'].std()) if n > 1 else 0.0
-    peak_clicks           = float(df['total_clicks'].max())
-    min_clicks            = float(df['total_clicks'].min())
-    trend_clicks          = float(np.polyfit(np.arange(n), clicks_arr, 1)[0]) if n > 1 else 0.0
-    clicks_early          = float(early['total_clicks'].sum())
-    clicks_mid            = float(mid['total_clicks'].sum())
-    clicks_late           = float(late['total_clicks'].sum())
-    active_days_early     = float(early['active_days'].sum())
-    active_days_late      = float(late['active_days'].sum())
-
-    # ── Score features ─────────────────────────────────────────────────────
-    avg_score         = float(df['avg_score'].mean())
-    peak_score        = float(df['avg_score'].max())
-    score_std         = float(df['avg_score'].std()) if n > 1 else 0.0
-    num_assessments   = float(df['num_assessments'].sum())
-    late_submissions  = float(df['late_submissions'].sum())
-    score_early       = float(early['avg_score'].mean()) if len(early) > 0 else 0.0
-    score_late        = float(late['avg_score'].mean())  if len(late)  > 0 else 0.0
-    score_trend       = score_late - score_early
-    score_trend_slope = float(np.polyfit(np.arange(n), scores_arr, 1)[0]) if n > 1 else 0.0
-
-    # ── Interaction features ───────────────────────────────────────────────
-    prev_attempts_x_score  = num_of_prev_attempts * avg_score
-    prev_attempts_x_clicks = num_of_prev_attempts * total_clicks
-
-    fv = pd.DataFrame([{
-        'code_module':             module_id,
-        'highest_education':       highest_education,
-        'age_band':                age_band,
-        'num_of_prev_attempts':    num_of_prev_attempts,
-        'studied_credits':         studied_credits,
-        'total_clicks':            total_clicks,
-        'active_days':             active_days,
-        'avg_clicks_per_window':   avg_clicks_per_window,
-        'std_clicks':              std_clicks,
-        'peak_clicks':             peak_clicks,
-        'min_clicks':              min_clicks,
-        'trend_clicks':            trend_clicks,
-        'clicks_early':            clicks_early,
-        'clicks_mid':              clicks_mid,
-        'clicks_late':             clicks_late,
-        'active_days_early':       active_days_early,
-        'active_days_late':        active_days_late,
-        'avg_score':               avg_score,
-        'peak_score':              peak_score,
-        'score_std':               score_std,
-        'num_assessments':         num_assessments,
-        'late_submissions':        late_submissions,
-        'score_early':             score_early,
-        'score_late':              score_late,
-        'score_trend':             score_trend,
-        'score_trend_slope':       score_trend_slope,
-        'prev_attempts_x_score':   prev_attempts_x_score,
-        'prev_attempts_x_clicks':  prev_attempts_x_clicks,
-    }])[FEATURE_NAMES]
+    r  = row.iloc[0]
+    fv = pd.DataFrame([{f: r[f] for f in FEATURE_NAMES if f in r.index}])
 
     perf_data = {
-        'num_assessments': int(num_assessments),
-        'avg_score':        avg_score,
-        'late_submissions': int(late_submissions),
-        'active_days':      int(active_days),
-        'score_trend':      score_trend,
-        'clicks_late':      clicks_late,
+        'num_assessments':  int(r.get('num_assessments', 0)),
+        'avg_score':        float(r.get('avg_score', 0.0)),
+        'late_submissions': int(r.get('late_submissions', 0)),
+        'active_days':      int(r.get('active_days', 0)),
+        'score_trend':      float(r.get('score_trend', 0.0)),
+        'clicks_late':      float(r.get('clicks_late', 0.0)),
     }
     return fv, perf_data
 
 
 # ─── قراءة longitudinal_risk من الداتابيس ────────────────────────────────────
 def compute_risk(conn, student_id, module_id, presentation):
-    """يقرأ الخطر المحسوب مسبقاً من الداتابيس"""
-    row = conn.execute("""
-        SELECT longitudinal_risk FROM Has_Prediction
-        WHERE student_id = ? AND module_id = ? AND presentation = ?
-        AND longitudinal_risk IS NOT NULL
-        LIMIT 1
-    """, (student_id, module_id, presentation)).fetchone()
-    return float(row[0]) if row else None
+    """يحسب الخطر من test_features.csv — نتيجة حقيقية من الموديل"""
+    row = features_df[features_df['student_id'] == student_id]
+    if row.empty:
+        return None
+    fv = pd.DataFrame([{f: row.iloc[0][f] for f in FEATURE_NAMES if f in row.columns}])
+    return float(model.predict_proba(fv)[0][1])
 
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
 # ── Dynamic threshold-based SHAP explanation ─────────────────────────────────
@@ -386,17 +298,52 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
     df_shap['abs'] = df_shap['SHAP'].abs()
     df_top = df_shap.nlargest(10, 'abs').sort_values('SHAP')
 
-    # ── SHAP bar chart ──────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-    colors = ['#E24B4A' if v > 0 else '#4CAF50' for v in df_top['SHAP']]
-    bars = ax.barh(df_top['Feature'], df_top['SHAP'], color=colors, height=0.6)
+    # ── SHAP bar chart — محاور ثابتة لكل الطلاب ────────────────────────────
+    # ترتيب ثابت للـ features (نفسه لكل الطلاب)
+    FIXED_FEATURES_ORDER = [
+        'Late-Stage Activity (wks 29–40)',
+        'Mid-Stage Activity (wks 7–28)',
+        'Early-Stage Activity (wks 1–6)',
+        'Active Days — Late Stage',
+        'Active Days — Early Stage',
+        'Activity Trend (up/down)',
+        'Average Score',
+        'Highest Score Achieved',
+        'Score Trend (late − early)',
+        'Score Slope (regression)',
+        'Score Consistency (std)',
+        'Assignments Submitted',
+        'Late Submissions',
+        'Retakes × Total Clicks',
+        'Retakes × Avg Score',
+        'Previous Attempts',
+        'Credits Studied',
+        'Education Level',
+        'Course Module',
+    ]
 
-    for bar, (_, row) in zip(bars, df_top.iterrows()):
-        val = row['Value']
+    # بني df كامل لكل الـ features بالترتيب الثابت
+    shap_dict = dict(zip(df_shap['Feature'], df_shap['SHAP']))
+    val_dict  = dict(zip(df_shap['Feature'], df_shap['Value']))
+
+    fixed_features = [f for f in FIXED_FEATURES_ORDER if f in shap_dict]
+    fixed_shap     = [shap_dict[f] for f in fixed_features]
+    fixed_vals     = [val_dict[f]  for f in fixed_features]
+    colors         = ['#E24B4A' if v > 0 else '#4CAF50' for v in fixed_shap]
+
+    fig, ax = plt.subplots(figsize=(9, len(fixed_features) * 0.45 + 1))
+    bars = ax.barh(fixed_features, fixed_shap, color=colors, height=0.6)
+
+    # حد X ثابت لكل الطلاب
+    max_abs = max(abs(s) for s in fixed_shap) if fixed_shap else 0.05
+    x_lim   = max(max_abs * 1.4, 0.025)
+    ax.set_xlim(-x_lim, x_lim)
+
+    for bar, val in zip(bars, fixed_vals):
         val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
         x = bar.get_width()
         ax.text(
-            x + 0.001 if x >= 0 else x - 0.001,
+            x + x_lim * 0.02 if x >= 0 else x - x_lim * 0.02,
             bar.get_y() + bar.get_height() / 2,
             val_str, va='center',
             ha='left' if x >= 0 else 'right',
@@ -405,7 +352,7 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
 
     ax.axvline(0, color='black', linewidth=0.8)
     ax.set_xlabel('Impact on Risk Score  (→ increases risk   ← decreases risk)', fontsize=9)
-    ax.set_title('🔍 Prediction Explanation — Top 10 Influencing Factors', fontsize=10, pad=10)
+    ax.set_title('🔍 Prediction Explanation — Feature Impact', fontsize=10, pad=10)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
@@ -416,38 +363,83 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
     top_risk    = df_shap[df_shap['SHAP'] > 0].nlargest(3, 'SHAP')
     top_protect = df_shap[df_shap['SHAP'] < 0].nsmallest(3, 'SHAP')
 
+    # ── تحديد عوامل الخطر والحماية بناءً على القيمة الفعلية ──────────────────
+    def is_truly_good(feature_id, value):
+        """هل القيمة فعلاً جيدة بغض النظر عن إشارة SHAP؟"""
+        threshold = FEATURE_THRESHOLDS.get(feature_id, 0)
+        bad_if_low = {'late_submissions', 'num_of_prev_attempts', 'std_clicks', 'score_std'}
+        if feature_id in bad_if_low:
+            return value <= threshold
+        return value >= threshold
+
+    # نصنف الـ top 10 features بناءً على القيمة الفعلية
+    truly_bad      = []
+    truly_good     = []
+    contradictory  = []
+
+    for _, row in df_top.iterrows():
+        fid  = row['FeatureID']
+        val  = row['Value']
+        shap = row['SHAP']
+        good = is_truly_good(fid, val)
+
+        if shap > 0 and not good:
+            truly_bad.append(row)       # SHAP يقول خطر + القيمة سيئة ✓
+        elif shap < 0 and good:
+            truly_good.append(row)      # SHAP يقول حماية + القيمة جيدة ✓
+        elif shap > 0 and good:
+            contradictory.append(row)   # SHAP يقول خطر لكن القيمة جيدة
+        else:
+            contradictory.append(row)   # SHAP يقول حماية لكن القيمة سيئة
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**🔴 What is increasing this risk?**")
-        if not top_risk.empty:
-            for _, row in top_risk.iterrows():
-                fid     = row['FeatureID']
-                val     = row['Value']
-                val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-                ar, en  = get_shap_text(fid, val)
-                st.error(
-                    f"**{row['Feature']}** = `{val_str}`\n\n"
-                    f"🇸🇦 {ar}\n\n"
-                    f"🇬🇧 _{en}_"
-                )
-        else:
-            st.info("No significant risk factors detected. / لا توجد عوامل خطر بارزة.")
+        shown = 0
+        for row in truly_bad[:3]:
+            fid     = row['FeatureID']
+            val     = row['Value']
+            val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+            ar, en  = get_shap_text(fid, val)
+            st.error(
+                f"**{row['Feature']}** = `{val_str}`\n\n"
+                f"🇸🇦 {ar}\n\n"
+                f"🇬🇧 _{en}_"
+            )
+            shown += 1
+        # أضف من contradictory لو ما في كافي
+        for row in contradictory[:max(0, 3-shown)]:
+            fid     = row['FeatureID']
+            val     = row['Value']
+            val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+            ar, en  = get_shap_text(fid, val)
+            st.error(
+                f"**{row['Feature']}** = `{val_str}`\n\n"
+                f"🇸🇦 {ar}\n\n"
+                f"🇬🇧 _{en}_"
+            )
+        if not truly_bad and not contradictory:
+            st.info("No significant risk factors. / لا توجد عوامل خطر بارزة.")
 
     with col2:
         st.markdown("**🟢 What is protecting this student?**")
-        if not top_protect.empty:
-            for _, row in top_protect.iterrows():
-                fid     = row['FeatureID']
-                val     = row['Value']
-                val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-                ar, en  = get_shap_text(fid, val)
-                st.success(
-                    f"**{row['Feature']}** = `{val_str}`\n\n"
-                    f"🇸🇦 {ar}\n\n"
-                    f"🇬🇧 _{en}_"
-                )
-        else:
-            st.info("No significant protective factors detected. / لا توجد عوامل حماية بارزة.")
+        shown = 0
+        for row in truly_good[:3]:
+            fid     = row['FeatureID']
+            val     = row['Value']
+            val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+            ar, en  = get_shap_text(fid, val)
+            st.success(
+                f"**{row['Feature']}** = `{val_str}`\n\n"
+                f"🇸🇦 {ar}\n\n"
+                f"🇬🇧 _{en}_"
+            )
+            shown += 1
+        if shown == 0:
+            st.warning(
+                "⚠️ لا توجد عوامل حماية واضحة لهذا الطالب\n\n"
+                "No clear protective factors for this student."
+            )
 
 # ─── Login ────────────────────────────────────────────────────────────────────
 def show_login():
