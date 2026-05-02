@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import os
 import shap
 
-# ─── Feature names — Longitudinal Model (28 features) ────────────────────────
+# ─── Feature names (نفس ترتيب التدريب) ───────────────────────────────────────
 FEATURE_NAMES = [
     'code_module', 'highest_education', 'age_band',
     'num_of_prev_attempts', 'studied_credits',
@@ -34,50 +34,30 @@ FEATURE_LABELS = {
     'peak_clicks':             'Peak Activity (best window)',
     'min_clicks':              'Minimum Activity (worst window)',
     'trend_clicks':            'Activity Trend (up/down)',
-    'clicks_early':            'Early-Stage Activity (wks 1–6)',
-    'clicks_mid':              'Mid-Stage Activity (wks 7–28)',
-    'clicks_late':             'Late-Stage Activity (wks 29–40)',
-    'active_days_early':       'Active Days — Early Stage',
-    'active_days_late':        'Active Days — Late Stage',
+    'clicks_early':            'Early-Stage Activity (wks 1-6)',
+    'clicks_mid':              'Mid-Stage Activity (wks 7-28)',
+    'clicks_late':             'Late-Stage Activity (wks 29-40)',
+    'active_days_early':       'Active Days - Early Stage',
+    'active_days_late':        'Active Days - Late Stage',
     'avg_score':               'Average Score',
     'peak_score':              'Highest Score Achieved',
     'score_std':               'Score Consistency (std)',
     'num_assessments':         'Assignments Submitted',
     'late_submissions':        'Late Submissions',
-    'score_early':             'Score — Early Stage',
-    'score_late':              'Score — Late Stage',
-    'score_trend':             'Score Trend (late − early)',
+    'score_early':             'Score - Early Stage',
+    'score_late':              'Score - Late Stage',
+    'score_trend':             'Score Trend (late - early)',
     'score_trend_slope':       'Score Slope (regression)',
-    'prev_attempts_x_score':   'Retakes × Avg Score',
-    'prev_attempts_x_clicks':  'Retakes × Total Clicks',
+    'prev_attempts_x_score':   'Retakes x Avg Score',
+    'prev_attempts_x_clicks':  'Retakes x Total Clicks',
 }
 
 # ─── Load model + explainer ───────────────────────────────────────────────────
-EXPECTED_N_FEATURES = 28   # الموديل الجديد Longitudinal (بدون gender)
-
 @st.cache_resource
 def load_model():
     model_path = os.path.join(os.path.dirname(__file__), 'model.pkl')
     with open(model_path, 'rb') as f:
         mdl = pickle.load(f)
-
-    # ── تحقق تلقائي من الموديل ──────────────────────────────────────────
-    n = getattr(mdl, 'n_features_in_', None)
-    try:
-        actual_feats = list(mdl.feature_names_in_)
-    except AttributeError:
-        actual_feats = []
-
-    if n == EXPECTED_N_FEATURES or set(actual_feats) == set(FEATURE_NAMES):
-        pass   # ✅ موديل صح
-    else:
-        st.error(
-            f"⚠️ **Wrong Model Detected!**\n\n"
-            f"الموديل المحمّل عنده **{n} features** لكن التطبيق يحتاج **{EXPECTED_N_FEATURES} features** (Longitudinal Model).\n\n"
-            f"**الحل:** ارفع `model_improved.pkl` بدل `model.pkl` على Streamlit Cloud.",
-            icon="🚨"
-        )
-        st.stop()
     return mdl
 
 @st.cache_resource
@@ -91,12 +71,15 @@ def get_db():
 model     = load_model()
 explainer = load_explainer(model)
 
-@st.cache_data
-def load_features():
-    path = os.path.join(os.path.dirname(__file__), 'test_features.csv')
-    return pd.read_csv(path)
-
-features_df = load_features()
+def compute_risk(conn, student_id, module_id, presentation):
+    row = conn.execute("""
+        SELECT longitudinal_risk FROM Has_Prediction
+        WHERE student_id = ? AND module_id = ? AND presentation = ?
+        AND longitudinal_risk IS NOT NULL LIMIT 1
+    """, (student_id, module_id, presentation)).fetchone()
+    if row:
+        return float(row[0])
+    return None
 
 st.set_page_config(page_title="Student XAI Portal", page_icon="🎓", layout="wide")
 
@@ -128,152 +111,77 @@ def risk_badge(risk):
     else:
         st.success(f"Current Risk: {risk:.1%}")
 
-# ─── بناء feature vector longitudinal من كل النوافذ ──────────────────────────
+# ─── بناء feature vector من الداتابيس ────────────────────────────────────────
 def build_feature_vector(conn, student_id, module_id, presentation):
     hp_sid = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid = get_col(conn, 'Has_Prediction', 'module_id')
 
-    # اقرأ features الطالب من CSV — محسوبة صح من raw data
-    row = features_df[features_df['student_id'] == student_id]
-    if row.empty:
+    wp = conn.execute(f"""
+        SELECT wp.total_clicks, wp.active_days, wp.avg_clicks_per_day,
+               wp.forumng_clicks, wp.quiz_clicks, wp.resource_clicks,
+               wp.homepage_clicks, wp.avg_score, wp.max_score,
+               wp.num_assessments, wp.late_submissions, wp.avg_days_late
+        FROM Has_Prediction hp
+        JOIN Prediction p ON hp.prediction_id = p.prediction_id
+        JOIN Window_Performance wp ON wp.prediction_id = p.prediction_id
+        JOIN Window w ON p.window_id = w.window_id
+        WHERE hp.{hp_sid} = {student_id}
+        AND hp.{hp_mid} = {module_id}
+        AND hp.presentation = '{presentation}'
+        ORDER BY w.window_number DESC LIMIT 1
+    """).fetchone()
+
+    sid_col = get_col(conn, 'Student', 'student_id')
+    st_row = conn.execute(f"""
+        SELECT gender, highest_education, age_band,
+               num_of_prev_attempts, studied_credits
+        FROM Student WHERE {sid_col} = {student_id}
+    """).fetchone()
+
+    if not wp or not st_row:
         return None, None
 
-    r  = row.iloc[0]
-    fv = pd.DataFrame([{f: r[f] for f in FEATURE_NAMES if f in r.index}]).astype(float)
+    (total_clicks, active_days, avg_clicks_per_day,
+     forumng_clicks, quiz_clicks, resource_clicks,
+     homepage_clicks, avg_score, max_score,
+     num_assessments, late_submissions, avg_days_late) = wp
+
+    (gender, highest_education, age_band,
+     num_of_prev_attempts, studied_credits) = st_row
+
+    fv = pd.DataFrame([{
+        'code_module':          module_id,
+        'gender':               gender,
+        'highest_education':    highest_education,
+        'age_band':             age_band,
+        'num_of_prev_attempts': num_of_prev_attempts,
+        'studied_credits':      studied_credits,
+        'total_clicks':         total_clicks or 0,
+        'active_days':          active_days or 0,
+        'avg_clicks_per_day':   avg_clicks_per_day or 0.0,
+        'forumng_clicks':       forumng_clicks or 0,
+        'oucontent_clicks':     0,
+        'resource_clicks':      resource_clicks or 0,
+        'url_clicks':           0,
+        'homepage_clicks':      homepage_clicks or 0,
+        'subpage_clicks':       0,
+        'quiz_clicks':          quiz_clicks or 0,
+        'avg_score':            avg_score or 0.0,
+        'max_score':            max_score or 0.0,
+        'num_assessments':      num_assessments or 0,
+        'late_submissions':     late_submissions or 0,
+        'avg_days_late':        avg_days_late or 0.0,
+    }])[FEATURE_NAMES]
 
     perf_data = {
-        'num_assessments':  int(r.get('num_assessments', 0)),
-        'avg_score':        float(r.get('avg_score', 0.0)),
-        'late_submissions': int(r.get('late_submissions', 0)),
-        'active_days':      int(r.get('active_days', 0)),
-        'score_trend':      float(r.get('score_trend', 0.0)),
-        'clicks_late':      float(r.get('clicks_late', 0.0)),
+        'num_assessments': num_assessments or 0,
+        'avg_score':        avg_score or 0.0,
+        'late_submissions': late_submissions or 0,
+        'active_days':      active_days or 0,
     }
     return fv, perf_data
 
-
-# ─── قراءة longitudinal_risk من الداتابيس ────────────────────────────────────
-def compute_risk(conn, student_id, module_id, presentation):
-    """يحسب الخطر من test_features.csv مباشرة"""
-    row = features_df[features_df['student_id'] == student_id]
-    if not row.empty:
-        return float(row.iloc[0]['risk_score'])
-    # fallback من الداتابيس
-    r = conn.execute("""
-        SELECT longitudinal_risk FROM Has_Prediction
-        WHERE student_id = ? AND longitudinal_risk IS NOT NULL LIMIT 1
-    """, (student_id,)).fetchone()
-    return float(r[0]) if r else None
-
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
-# ── Dynamic threshold-based SHAP explanation ─────────────────────────────────
-# الحدود المرجعية (من متوسطات الداتا)
-FEATURE_THRESHOLDS = {
-    'total_clicks':           1000,
-    'active_days':            30,
-    'avg_clicks_per_window':  50,
-    'clicks_early':           200,
-    'clicks_mid':             500,
-    'clicks_late':            400,
-    'active_days_early':      10,
-    'active_days_late':       8,
-    'avg_score':              60,
-    'peak_score':             70,
-    'score_early':            60,
-    'score_late':             60,
-    'score_trend':            0,
-    'score_trend_slope':      0,
-    'trend_clicks':           0,
-    'num_assessments':        3,
-    'late_submissions':       1,
-    'prev_attempts_x_score':  60,
-    'prev_attempts_x_clicks': 500,
-    'num_of_prev_attempts':   1,
-    'studied_credits':        60,
-    'std_clicks':             200,
-    'peak_clicks':            300,
-    'min_clicks':             50,
-    'score_std':              15,
-}
-
-# labels: (low_ar, low_en, high_ar, high_en)
-SHAP_LABELS = {
-    'clicks_late':            ("نشاط منخفض في الأسابيع الأخيرة",       "Low activity in final weeks",
-                               "نشاط مرتفع في الأسابيع الأخيرة",       "High activity in final weeks"),
-    'clicks_mid':             ("نشاط منخفض في منتصف الفصل",            "Low activity in mid-course",
-                               "نشاط مرتفع في منتصف الفصل",            "High activity in mid-course"),
-    'clicks_early':           ("نشاط منخفض في بداية الفصل",            "Low activity at course start",
-                               "نشاط مرتفع في بداية الفصل",            "High activity at course start"),
-    'total_clicks':           ("نشاط كلي منخفض على المنصة",            "Low total platform activity",
-                               "نشاط كلي مرتفع على المنصة",            "High total platform activity"),
-    'active_days':            ("أيام نشاط قليلة بشكل عام",             "Few overall active days",
-                               "أيام نشاط كثيرة بشكل عام",             "Many overall active days"),
-    'active_days_early':      ("أيام نشاط قليلة في البداية",           "Few active days early on",
-                               "أيام نشاط كافية في البداية",           "Good active days early on"),
-    'active_days_late':       ("أيام نشاط قليلة في النهاية",           "Few active days toward end",
-                               "أيام نشاط كافية في النهاية",           "Good active days toward end"),
-    'avg_clicks_per_window':  ("متوسط نشاط منخفض لكل نافذة",          "Low avg activity per window",
-                               "متوسط نشاط مرتفع لكل نافذة",          "High avg activity per window"),
-    'trend_clicks':           ("اتجاه تراجعي في النشاط",               "Declining engagement trend",
-                               "اتجاه تصاعدي في النشاط",               "Increasing engagement trend"),
-    'avg_score':              ("متوسط درجات منخفض",                    "Low average score",
-                               "متوسط درجات مرتفع",                    "High average score"),
-    'peak_score':             ("أعلى درجة منخفضة",                     "Low peak score",
-                               "أعلى درجة مرتفعة",                     "High peak score"),
-    'score_early':            ("أداء ضعيف في التقييمات المبكرة",        "Low early assessment scores",
-                               "أداء قوي في التقييمات المبكرة",        "High early assessment scores"),
-    'score_late':             ("أداء ضعيف في التقييمات المتأخرة",       "Low late assessment scores",
-                               "أداء قوي في التقييمات المتأخرة",       "High late assessment scores"),
-    'score_trend':            ("تراجع الدرجات مقارنة بالبداية",         "Scores declined vs early",
-                               "تحسن الدرجات مقارنة بالبداية",         "Scores improved vs early"),
-    'score_trend_slope':      ("منحنى الدرجات سلبي",                   "Negative score trajectory",
-                               "منحنى الدرجات إيجابي",                 "Positive score trajectory"),
-    'score_std':              ("درجات غير ثابتة ومتذبذبة",             "Inconsistent scores",
-                               "درجات ثابتة ومتسقة",                   "Consistent scores"),
-    'num_assessments':        ("عدد تقييمات مقدمة منخفض",              "Few assessments submitted",
-                               "عدد تقييمات مقدمة مرتفع",              "Many assessments submitted"),
-    'late_submissions':       ("تسليمات متأخرة متعددة",                "Multiple late submissions",
-                               "التزام بمواعيد التسليم",               "Submissions on time"),
-    'prev_attempts_x_score':  ("محاولات متكررة مع درجات منخفضة",        "Retakes + low scores",
-                               "محاولات متكررة مع درجات مرتفعة",       "Retakes + strong scores"),
-    'prev_attempts_x_clicks': ("محاولات متكررة مع تفاعل منخفض",        "Retakes + low engagement",
-                               "محاولات متكررة مع تفاعل مرتفع",        "Retakes + high engagement"),
-    'num_of_prev_attempts':   ("محاولات سابقة متعددة",                  "Multiple previous attempts",
-                               "أول محاولة للمقرر",                    "First attempt at course"),
-    'studied_credits':        ("حمل دراسي ثقيل",                       "Heavy credit load",
-                               "حمل دراسي مناسب",                      "Manageable credit load"),
-    'std_clicks':             ("نشاط غير منتظم ومتذبذب",               "Very inconsistent activity",
-                               "نشاط منتظم وثابت",                     "Consistent activity pattern"),
-    'peak_clicks':            ("لا توجد فترة نشاط مرتفع",              "No high-activity window",
-                               "فترة نشاط مرتفع موجودة",               "Had high-activity windows"),
-    'min_clicks':             ("بعض النوافذ بدون نشاط تقريباً",         "Some windows near-zero activity",
-                               "نشاط موجود حتى في أهدأ فترة",          "Activity even in quiet periods"),
-    'highest_education':      ("مستوى تعليمي سابق منخفض",              "Lower prior education",
-                               "مستوى تعليمي سابق مرتفع",              "Higher prior education"),
-    'code_module':            ("نمط خطر خاص بهذا المقرر",              "Module-specific risk pattern",
-                               "نمط حماية خاص بهذا المقرر",            "Module-specific protection"),
-    'age_band':               ("عامل ديموغرافي — الفئة العمرية",        "Demographic — age group",
-                               "عامل ديموغرافي — الفئة العمرية",        "Demographic — age group"),
-}
-
-def get_shap_text(feature_id, value):
-    """يرجع التفسير الصحيح بناءً على القيمة الفعلية مقارنة بالحد المرجعي"""
-    labels = SHAP_LABELS.get(feature_id)
-    if not labels:
-        return feature_id, feature_id
-    threshold = FEATURE_THRESHOLDS.get(feature_id, 0)
-    # late_submissions: أعلى = أسوأ
-    reverse_features = {'late_submissions', 'num_of_prev_attempts', 'std_clicks', 'score_std'}
-    if feature_id in reverse_features:
-        is_high = value > threshold
-    else:
-        is_high = value >= threshold
-    if is_high:
-        return labels[2], labels[3]   # high_ar, high_en
-    else:
-        return labels[0], labels[1]   # low_ar, low_en
-
-
 def show_shap_explanation(conn, student_id, module_id, presentation):
     fv, _ = build_feature_vector(conn, student_id, module_id, presentation)
     if fv is None:
@@ -282,168 +190,64 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
 
     shap_vals = explainer.shap_values(fv)
 
+    # نجيب SHAP values للـ class 1 (At-Risk) ونتأكد إنها 1D
     if isinstance(shap_vals, list):
         sv = np.array(shap_vals[1]).flatten()
     else:
         sv = np.array(shap_vals).flatten()
 
+    # لو الطول مش صح نأخذ أول 21 قيمة
     sv = sv[:len(FEATURE_NAMES)]
 
-    # نحذف الـ demographic features من العرض (موجودة في الموديل بس مش تعليمية)
-    EXCLUDE_FROM_DISPLAY = {'gender', 'age_band', 'code_module'}
-
     df_shap = pd.DataFrame({
-        'Feature':  [FEATURE_LABELS.get(f, f) for f in FEATURE_NAMES],
-        'FeatureID': FEATURE_NAMES,
-        'SHAP':     sv,
-        'Value':    fv.values[0],
+        'Feature': [FEATURE_LABELS.get(f, f) for f in FEATURE_NAMES],
+        'SHAP':    sv,
+        'Value':   fv.values[0],
     })
-    df_shap = df_shap[~df_shap['FeatureID'].isin(EXCLUDE_FROM_DISPLAY)]
     df_shap['abs'] = df_shap['SHAP'].abs()
     df_top = df_shap.nlargest(10, 'abs').sort_values('SHAP')
 
-    # ── SHAP bar chart — محاور ثابتة لكل الطلاب ────────────────────────────
-    # ترتيب ثابت للـ features (نفسه لكل الطلاب)
-    FIXED_FEATURES_ORDER = [
-        'Late-Stage Activity (wks 29–40)',
-        'Mid-Stage Activity (wks 7–28)',
-        'Early-Stage Activity (wks 1–6)',
-        'Active Days — Late Stage',
-        'Active Days — Early Stage',
-        'Activity Trend (up/down)',
-        'Average Score',
-        'Highest Score Achieved',
-        'Score Trend (late − early)',
-        'Score Slope (regression)',
-        'Score Consistency (std)',
-        'Assignments Submitted',
-        'Late Submissions',
-        'Retakes × Total Clicks',
-        'Retakes × Avg Score',
-        'Previous Attempts',
-        'Credits Studied',
-        'Education Level',
-        'Course Module',
-    ]
+    # ── رسم SHAP bar chart ─────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 4))
+    colors = ['#E24B4A' if v > 0 else '#4CAF50' for v in df_top['SHAP']]
+    bars = ax.barh(df_top['Feature'], df_top['SHAP'], color=colors)
 
-    # بني df كامل لكل الـ features بالترتيب الثابت
-    shap_dict = dict(zip(df_shap['Feature'], df_shap['SHAP']))
-    val_dict  = dict(zip(df_shap['Feature'], df_shap['Value']))
-
-    fixed_features = [f for f in FIXED_FEATURES_ORDER if f in shap_dict]
-    fixed_shap     = [shap_dict[f] for f in fixed_features]
-    fixed_vals     = [val_dict[f]  for f in fixed_features]
-    colors         = ['#E24B4A' if v > 0 else '#4CAF50' for v in fixed_shap]
-
-    fig, ax = plt.subplots(figsize=(9, len(fixed_features) * 0.45 + 1))
-    bars = ax.barh(fixed_features, fixed_shap, color=colors, height=0.6)
-
-    # حد X ثابت لكل الطلاب
-    max_abs = max(abs(s) for s in fixed_shap) if fixed_shap else 0.05
-    x_lim   = max(max_abs * 1.4, 0.025)
-    ax.set_xlim(-x_lim, x_lim)
-
-    for bar, val in zip(bars, fixed_vals):
-        val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
+    for bar, (_, row) in zip(bars, df_top.iterrows()):
+        val = row['Value']
+        val_str = f"= {val:.1f}" if isinstance(val, float) else f"= {int(val)}"
         x = bar.get_width()
         ax.text(
-            x + x_lim * 0.02 if x >= 0 else x - x_lim * 0.02,
+            x + 0.001 if x >= 0 else x - 0.001,
             bar.get_y() + bar.get_height() / 2,
             val_str, va='center',
             ha='left' if x >= 0 else 'right',
-            fontsize=8, color='#555'
+            fontsize=8, color='gray'
         )
 
     ax.axvline(0, color='black', linewidth=0.8)
-    ax.set_xlabel('Impact on Risk Score  (→ increases risk   ← decreases risk)', fontsize=9)
-    ax.set_title('🔍 Prediction Explanation — Feature Impact', fontsize=10, pad=10)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.set_xlabel('Impact on Risk Prediction', fontsize=9)
+    ax.set_title(
+        'Why this prediction?  🔴 Red = increases risk   🟢 Green = decreases risk',
+        fontsize=9, pad=8)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
 
-    # ── Plain-language explanation cards ────────────────────────────────────
+    # ── تفسير نصي ─────────────────────────────────────────────────────────
     top_risk    = df_shap[df_shap['SHAP'] > 0].nlargest(3, 'SHAP')
     top_protect = df_shap[df_shap['SHAP'] < 0].nsmallest(3, 'SHAP')
 
-    # ── تحديد عوامل الخطر والحماية بناءً على القيمة الفعلية ──────────────────
-    def is_truly_good(feature_id, value):
-        """هل القيمة فعلاً جيدة بغض النظر عن إشارة SHAP؟"""
-        threshold = FEATURE_THRESHOLDS.get(feature_id, 0)
-        bad_if_low = {'late_submissions', 'num_of_prev_attempts', 'std_clicks', 'score_std'}
-        if feature_id in bad_if_low:
-            return value <= threshold
-        return value >= threshold
-
-    # نصنف الـ top 10 features بناءً على القيمة الفعلية
-    truly_bad      = []
-    truly_good     = []
-    contradictory  = []
-
-    for _, row in df_top.iterrows():
-        fid  = row['FeatureID']
-        val  = row['Value']
-        shap = row['SHAP']
-        good = is_truly_good(fid, val)
-
-        if shap > 0 and not good:
-            truly_bad.append(row)       # SHAP يقول خطر + القيمة سيئة ✓
-        elif shap < 0 and good:
-            truly_good.append(row)      # SHAP يقول حماية + القيمة جيدة ✓
-        elif shap > 0 and good:
-            contradictory.append(row)   # SHAP يقول خطر لكن القيمة جيدة
-        else:
-            contradictory.append(row)   # SHAP يقول حماية لكن القيمة سيئة
-
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**🔴 What is increasing this risk?**")
-        shown = 0
-        for row in truly_bad[:3]:
-            fid     = row['FeatureID']
-            val     = row['Value']
-            val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-            ar, en  = get_shap_text(fid, val)
-            st.error(
-                f"**{row['Feature']}** = `{val_str}`\n\n"
-                f"🇸🇦 {ar}\n\n"
-                f"🇬🇧 _{en}_"
-            )
-            shown += 1
-        # أضف من contradictory لو ما في كافي
-        for row in contradictory[:max(0, 3-shown)]:
-            fid     = row['FeatureID']
-            val     = row['Value']
-            val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-            ar, en  = get_shap_text(fid, val)
-            st.error(
-                f"**{row['Feature']}** = `{val_str}`\n\n"
-                f"🇸🇦 {ar}\n\n"
-                f"🇬🇧 _{en}_"
-            )
-        if not truly_bad and not contradictory:
-            st.info("No significant risk factors. / لا توجد عوامل خطر بارزة.")
-
+        if not top_risk.empty:
+            st.markdown("**🔴 Main risk factors:**")
+            for _, row in top_risk.iterrows():
+                st.markdown(f"- **{row['Feature']}** &nbsp; *(impact: +{row['SHAP']:.3f})*")
     with col2:
-        st.markdown("**🟢 What is protecting this student?**")
-        shown = 0
-        for row in truly_good[:3]:
-            fid     = row['FeatureID']
-            val     = row['Value']
-            val_str = f"{val:.1f}" if isinstance(val, float) else f"{int(val)}"
-            ar, en  = get_shap_text(fid, val)
-            st.success(
-                f"**{row['Feature']}** = `{val_str}`\n\n"
-                f"🇸🇦 {ar}\n\n"
-                f"🇬🇧 _{en}_"
-            )
-            shown += 1
-        if shown == 0:
-            st.warning(
-                "⚠️ لا توجد عوامل حماية واضحة لهذا الطالب\n\n"
-                "No clear protective factors for this student."
-            )
+        if not top_protect.empty:
+            st.markdown("**🟢 Protective factors:**")
+            for _, row in top_protect.iterrows():
+                st.markdown(f"- **{row['Feature']}** &nbsp; *(impact: {row['SHAP']:.3f})*")
 
 # ─── Login ────────────────────────────────────────────────────────────────────
 def show_login():
@@ -518,20 +322,29 @@ def show_student_home():
     for row in modules:
         module_id, presentation, final_result = row
         module_name = 'BBB' if module_id == 0 else 'FFF'
-        risk = compute_risk(conn, student_id, module_id, presentation)
+        pred = conn.execute(f"""
+            SELECT p.risk_probability FROM Has_Prediction hp
+            JOIN Prediction p ON hp.prediction_id = p.prediction_id
+            JOIN Window w ON p.window_id = w.window_id
+            WHERE hp.{hp_sid} = {student_id}
+            AND hp.{hp_mid} = {module_id}
+            AND hp.presentation = '{presentation}'
+            ORDER BY w.window_number DESC LIMIT 1
+        """).fetchone()
 
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             st.markdown(f"**{module_name}** - {presentation}")
             st.caption(f"Final result: {final_result}")
         with col2:
-            if risk is not None:
+            if pred:
+                risk = pred[0]
                 if risk >= 0.7:
-                    st.error(f"🔴 Overall Risk: {risk:.1%}")
+                    st.error(f"Risk: {risk:.1%}")
                 elif risk >= 0.5:
-                    st.warning(f"🟠 Overall Risk: {risk:.1%}")
+                    st.warning(f"Risk: {risk:.1%}")
                 else:
-                    st.success(f"🟢 Overall Risk: {risk:.1%}")
+                    st.success(f"Risk: {risk:.1%}")
         with col3:
             if st.button("View", key=f"v_{module_id}_{presentation}"):
                 st.session_state.selected_module       = module_id
@@ -568,41 +381,29 @@ def show_student_module():
         ORDER BY w.window_number
     """).fetchall()
 
-    overall_risk = compute_risk(conn, student_id, module_id, presentation)
-    if overall_risk is None:
+    if not predictions:
         st.info("No predictions available.")
         conn.close()
         return
 
-    if not predictions:
-        window_nums = list(range(1, 21))
-        risk_vals   = [overall_risk] * 20
-    else:
-        window_nums = [p[1] for p in predictions]
-        risk_vals   = [p[0] for p in predictions]
+    latest_risk = predictions[-1][0]
+    window_nums = [p[1] for p in predictions]
+    risk_vals   = [p[0] for p in predictions]
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        risk_badge(latest_risk)
 
     _, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        risk_badge(overall_risk)
     if perf_data:
         with col2:
             st.metric("Assignments", int(perf_data['num_assessments']))
         with col3:
             st.metric("Avg Score", f"{perf_data['avg_score']:.1f}%")
-        with col4:
-            trend = perf_data.get('score_trend', 0)
-            arrow = "📈" if trend > 0 else ("📉" if trend < 0 else "➡️")
-            st.metric("Score Trend", f"{arrow} {trend:+.1f}")
 
     # ── Risk Chart ──────────────────────────────────────────────────────────
     st.divider()
-    st.subheader("📈 Risk over time (across all windows)")
-    st.caption(
-        "ℹ️ This chart shows per-window screening from the initial model. "
-        "The **Overall Risk** score above is computed using full longitudinal analysis across all windows."
-    )
+    st.subheader("📈 Risk over time")
     fig, ax = plt.subplots(figsize=(10, 3))
     colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
               for r in risk_vals]
@@ -623,34 +424,6 @@ def show_student_module():
     # ── Recommendations ─────────────────────────────────────────────────────
     st.divider()
     st.subheader("💡 Your Recommendations")
-
-    _, perf = build_feature_vector(conn, student_id, module_id, presentation)
-    fv_row  = features_df[features_df['student_id'] == student_id]
-
-    if perf is not None and not fv_row.empty:
-        r = fv_row.iloc[0]
-        recs = []
-
-        if r.get('avg_score', 0) < 60:
-            recs.append("📚 Your average score is below 60% — consider revisiting course materials and seeking academic support.")
-        if r.get('clicks_late', 0) < 200:
-            recs.append("💻 Your platform activity is low in the final weeks — try to engage more regularly with course content.")
-        if r.get('score_trend', 0) < -5:
-            recs.append("📉 Your scores are declining — identify the topics you're struggling with and ask for help early.")
-        if r.get('late_submissions', 0) > 2:
-            recs.append("⏰ You have multiple late submissions — try to manage your time better and submit assignments on time.")
-        if r.get('num_assessments', 0) < 3:
-            recs.append("📝 You have submitted very few assessments — make sure to complete all required assignments.")
-        if r.get('active_days_late', 0) < 5:
-            recs.append("🔴 You have very few active days in the final stage — consistent engagement is key to success.")
-        if not recs:
-            recs.append("✅ Keep up the good work! Continue engaging with course materials regularly.")
-
-        st.markdown("**AI Recommendations:**")
-        for rec in recs:
-            st.info(rec)
-
-    # توصيات الدكتور من الداتابيس لو موجودة
     last_pred = conn.execute(f"""
         SELECT p.prediction_id FROM Has_Prediction hp
         JOIN Prediction p ON hp.prediction_id = p.prediction_id
@@ -662,10 +435,19 @@ def show_student_module():
     """).fetchone()
 
     if last_pred:
+        pred_id = last_pred[0]
+        ai_recs = conn.execute(
+            f"SELECT rec_text FROM AI_Recommendation WHERE prediction_id = {pred_id}"
+        ).fetchall()
+        if ai_recs:
+            st.markdown("**AI Recommendations:**")
+            for rec in ai_recs:
+                st.info(rec[0])
+
         doc_recs = conn.execute(f"""
             SELECT dr.rec_text, i.name FROM Doctor_Recommendation dr
             JOIN Instructor i ON dr.instructor_id = i.instructor_id
-            WHERE dr.prediction_id = {last_pred[0]}
+            WHERE dr.prediction_id = {pred_id}
         """).fetchall()
         if doc_recs:
             st.markdown("**Instructor Recommendations:**")
@@ -717,13 +499,10 @@ def show_instructor_home():
         for i, (mid, pres) in enumerate(courses):
             module_name = 'BBB' if mid == 0 else 'FFF'
             count = conn.execute(f"""
-                SELECT COUNT(DISTINCT hp.student_id)
-                FROM Has_Prediction hp
-                JOIN Supervises s ON hp.student_id = s.{sup_sid}
-                WHERE s.{sup_iid} = {instructor_id}
-                AND hp.module_id = {mid}
-                AND hp.presentation = '{pres}'
-                AND hp.longitudinal_risk IS NOT NULL
+                SELECT COUNT(DISTINCT {sup_sid}) FROM Supervises
+                WHERE {sup_iid} = {instructor_id}
+                AND {sup_mid} = {mid}
+                AND presentation = '{pres}'
             """).fetchone()[0]
             with cols[i]:
                 st.markdown(f"""
@@ -760,13 +539,21 @@ def show_instructor_home():
 
     risk_data = []
     for (sid,) in students:
-        risk = compute_risk(conn, sid, sel_mid, sel_pres)
-        if risk is not None:
+        pred = conn.execute(f"""
+            SELECT p.risk_probability FROM Has_Prediction hp
+            JOIN Prediction p ON hp.prediction_id = p.prediction_id
+            JOIN Window w ON p.window_id = w.window_id
+            WHERE hp.{hp_sid} = {sid}
+            AND hp.{hp_mid} = {sel_mid}
+            AND hp.presentation = '{sel_pres}'
+            ORDER BY w.window_number DESC LIMIT 1
+        """).fetchone()
+        if pred:
             risk_data.append({
                 'student_id':   sid,
                 'module_id':    sel_mid,
                 'presentation': sel_pres,
-                'risk':         risk
+                'risk':         pred[0]
             })
 
     if not risk_data:
@@ -844,41 +631,29 @@ def show_instructor_student():
         ORDER BY w.window_number
     """).fetchall()
 
-    overall_risk = compute_risk(conn, student_id, module_id, presentation)
-    if overall_risk is None:
+    if not predictions:
         st.info("No predictions available.")
         conn.close()
         return
 
-    if not predictions:
-        window_nums = list(range(1, 21))
-        risk_vals   = [overall_risk] * 20
-    else:
-        window_nums = [p[1] for p in predictions]
-        risk_vals   = [p[0] for p in predictions]
+    latest_risk = predictions[-1][0]
+    window_nums = [p[1] for p in predictions]
+    risk_vals   = [p[0] for p in predictions]
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        risk_badge(latest_risk)
 
     _, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        risk_badge(overall_risk)
     if perf_data:
         with col2:
             st.metric("Assignments", int(perf_data['num_assessments']))
         with col3:
             st.metric("Avg Score", f"{perf_data['avg_score']:.1f}%")
-        with col4:
-            trend = perf_data.get('score_trend', 0)
-            arrow = "📈" if trend > 0 else ("📉" if trend < 0 else "➡️")
-            st.metric("Score Trend", f"{arrow} {trend:+.1f}")
 
     # ── Risk Chart ──────────────────────────────────────────────────────────
     st.divider()
-    st.subheader("📈 Risk Trajectory (across all windows)")
-    st.caption(
-        "ℹ️ This chart shows per-window screening from the initial model. "
-        "The **Overall Risk** score above is computed using full longitudinal analysis across all windows."
-    )
+    st.subheader("📈 Risk Trajectory")
     fig, ax = plt.subplots(figsize=(10, 3))
     colors = ['#E24B4A' if r >= 0.7 else '#EF9F27' if r >= 0.5 else '#639922'
               for r in risk_vals]
@@ -898,75 +673,53 @@ def show_instructor_student():
 
     # ── Recommendations + Doctor Notes ──────────────────────────────────────
     st.divider()
+    last_pred = conn.execute(f"""
+        SELECT p.prediction_id FROM Has_Prediction hp
+        JOIN Prediction p ON hp.prediction_id = p.prediction_id
+        JOIN Window w ON p.window_id = w.window_id
+        WHERE hp.{hp_sid} = {student_id}
+        AND hp.{hp_mid} = {module_id}
+        AND hp.presentation = '{presentation}'
+        ORDER BY w.window_number DESC LIMIT 1
+    """).fetchone()
 
-    # AI Recommendations من features الطالب
-    st.subheader("💡 AI Recommendations")
-    fv_row = features_df[features_df['student_id'] == student_id]
-    if not fv_row.empty:
-        r = fv_row.iloc[0]
-        recs = []
-        if r.get('avg_score', 0) < 60:
-            recs.append("📚 Student's average score is below 60% — academic intervention recommended.")
-        if r.get('clicks_late', 0) < 200:
-            recs.append("💻 Low platform activity in final weeks — consider reaching out to encourage engagement.")
-        if r.get('score_trend', 0) < -5:
-            recs.append("📉 Declining score trend — student may need targeted academic support.")
-        if r.get('late_submissions', 0) > 2:
-            recs.append("⏰ Multiple late submissions — discuss time management strategies with student.")
-        if r.get('num_assessments', 0) < 3:
-            recs.append("📝 Very few assessments submitted — follow up on missing work.")
-        if r.get('active_days_late', 0) < 5:
-            recs.append("🔴 Very few active days in final stage — student may have disengaged.")
-        if not recs:
-            recs.append("✅ Student appears to be on track — continue monitoring.")
-        for rec in recs:
-            st.info(rec)
+    if last_pred:
+        pred_id = last_pred[0]
 
-    st.divider()
+        st.subheader("💡 AI Recommendations")
+        ai_recs = conn.execute(
+            f"SELECT rec_text FROM AI_Recommendation WHERE prediction_id = {pred_id}"
+        ).fetchall()
+        for rec in ai_recs:
+            st.info(rec[0])
 
-    # توصية الدكتور — محفوظة بـ student_id مباشرة
-    try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS Student_Note (
-                note_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                student_id INTEGER, module_id INTEGER, presentation TEXT,
-                instructor_id INTEGER, note_text TEXT, note_date TEXT
-            )
-        """)
-        conn.commit()
-    except:
-        pass
+        st.divider()
+        st.subheader("📝 Add your recommendation")
+        note = st.text_area("Write your note",
+                            placeholder="Enter your recommendation...")
+        if st.button("Save recommendation", use_container_width=True):
+            if note.strip():
+                note_clean = note.replace("'", "''")
+                conn.execute(f"""
+                    INSERT INTO Doctor_Recommendation
+                    (rec_text, rec_date, prediction_id, instructor_id)
+                    VALUES ('{note_clean}', '{pd.Timestamp.now().date()}',
+                            {pred_id}, {st.session_state.user_id})
+                """)
+                conn.commit()
+                st.success("Recommendation saved!")
+            else:
+                st.warning("Please write a recommendation first")
 
-    st.subheader("📝 Add Recommendation")
-    note = st.text_area("Write your note", placeholder="Enter your recommendation...")
-    if st.button("Save recommendation", use_container_width=True):
-        if note.strip():
-            note_clean = note.replace("'", "''")
-            conn.execute(f"""
-                INSERT INTO Student_Note
-                (student_id, module_id, presentation, instructor_id, note_text, note_date)
-                VALUES ({student_id}, {module_id}, '{presentation}',
-                        {st.session_state.user_id}, '{note_clean}',
-                        '{pd.Timestamp.now().date()}')
-            """)
-            conn.commit()
-            st.success("✅ Recommendation saved!")
-        else:
-            st.warning("Please write a recommendation first")
-
-    # عرض التوصيات السابقة
-    prev_notes = conn.execute(f"""
-        SELECT note_text, note_date FROM Student_Note
-        WHERE student_id = {student_id}
-        AND module_id = {module_id}
-        AND presentation = '{presentation}'
-        ORDER BY note_date DESC
-    """).fetchall()
-    if prev_notes:
-        st.subheader("Previous Notes")
-        for note in prev_notes:
-            st.success(note[0])
-            st.caption(f"Date: {note[1]}")
+        doc_recs = conn.execute(f"""
+            SELECT rec_text, rec_date FROM Doctor_Recommendation
+            WHERE prediction_id = {pred_id}
+        """).fetchall()
+        if doc_recs:
+            st.subheader("Previous notes")
+            for rec in doc_recs:
+                st.success(rec[0])
+                st.caption(f"Date: {rec[1]}")
 
     conn.close()
 
