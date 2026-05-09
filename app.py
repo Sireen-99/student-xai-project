@@ -9,7 +9,6 @@ matplotlib.rcParams['font.family'] = 'DejaVu Sans'
 import os
 import shap
 import json
-
 # ─── Feature names ────────────────────────────────────────────────────────────
 FEATURE_NAMES = [
     'code_module', 'highest_education', 'age_band',
@@ -23,7 +22,6 @@ FEATURE_NAMES = [
     'score_early', 'score_late', 'score_trend', 'score_trend_slope',
     'prev_attempts_x_score', 'prev_attempts_x_clicks',
 ]
-
 FEATURE_LABELS = {
     'code_module':             'Course Module',
     'highest_education':       'Education Level',
@@ -54,27 +52,21 @@ FEATURE_LABELS = {
     'prev_attempts_x_score':   'Retakes x Avg Score',
     'prev_attempts_x_clicks':  'Retakes x Total Clicks',
 }
-
 # ─── Load model + explainer ───────────────────────────────────────────────────
 @st.cache_resource
 def load_model():
     model_path = os.path.join(os.path.dirname(__file__), 'model.pkl')
     with open(model_path, 'rb') as f:
         return pickle.load(f)
-
 @st.cache_resource
 def load_explainer(_model):
     return shap.TreeExplainer(_model)
-
 def get_db():
     db_path = os.path.join(os.path.dirname(__file__), 'learning_analytics.db')
     return sqlite3.connect(db_path)
-
 model     = load_model()
 explainer = load_explainer(model)
-
 st.set_page_config(page_title="Student XAI Portal", page_icon="🎓", layout="wide")
-
 # ─── Session state ────────────────────────────────────────────────────────────
 for key, val in {
     'page': 'login', 'user_type': None, 'user_id': None,
@@ -83,7 +75,6 @@ for key, val in {
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
-
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 def get_col(conn, table, preferred):
     cursor = conn.execute(f"PRAGMA table_info({table})")
@@ -94,7 +85,6 @@ def get_col(conn, table, preferred):
         if preferred.lower() in col.lower():
             return col
     return cols[0] if cols else preferred
-
 def risk_badge(risk):
     if risk >= 0.7:
         st.error(f"Current Risk: {risk:.1%}")
@@ -102,13 +92,11 @@ def risk_badge(risk):
         st.warning(f"Current Risk: {risk:.1%}")
     else:
         st.success(f"Current Risk: {risk:.1%}")
-
 # ─── بناء feature vector من Has_Prediction ───────────────────────────────────
 def build_feature_vector(conn, student_id, module_id, presentation):
     hp_sid  = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid  = get_col(conn, 'Has_Prediction', 'module_id')
     sid_col = get_col(conn, 'Student', 'student_id')
-
     row = conn.execute(f"""
         SELECT window_clicks, window_scores, longitudinal_risk
         FROM Has_Prediction
@@ -118,35 +106,27 @@ def build_feature_vector(conn, student_id, module_id, presentation):
         AND window_clicks IS NOT NULL
         LIMIT 1
     """).fetchone()
-
     if not row:
         return None, None
-
     wc_raw, ws_raw, risk = row
     wc = json.loads(wc_raw) if wc_raw else [0]*20
     ws_raw_list = json.loads(ws_raw) if ws_raw else [0.0]*20
     ws = [float(v) if v is not None and str(v) != 'NaN' and not (isinstance(v, float) and np.isnan(v)) else 0.0
           for v in ws_raw_list]
-
     st_row = conn.execute(f"""
         SELECT highest_education, age_band,
                num_of_prev_attempts, studied_credits
         FROM Student WHERE {sid_col} = {student_id}
     """).fetchone()
-
     if not st_row:
         return None, None
-
     highest_education, age_band, prev_att, studied_credits = st_row
-
     wc_arr = np.array(wc, dtype=float)
     ws_arr = np.array(ws, dtype=float)
     n = len(wc_arr)
-
     EARLY_END  = 3
     MID_END    = 14
     LATE_START = 14
-
     clicks_total = int(wc_arr.sum())
     clicks_early = int(wc_arr[:EARLY_END].sum())
     clicks_mid   = int(wc_arr[EARLY_END:MID_END].sum())
@@ -159,7 +139,6 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     avg_clicks   = float(wc_arr.mean())
     std_clicks   = float(wc_arr.std()) if n > 1 else 0.0
     trend_clicks = float(np.polyfit(range(n), wc_arr, 1)[0]) if n > 1 else 0.0
-
     ws_nonzero  = ws_arr[ws_arr > 0]
     score_all   = float(ws_nonzero.mean()) if len(ws_nonzero) > 0 else 0.0
     score_early = float(ws_arr[:EARLY_END][ws_arr[:EARLY_END] > 0].mean()) if len(ws_arr[:EARLY_END][ws_arr[:EARLY_END] > 0]) > 0 else 0.0
@@ -170,7 +149,6 @@ def build_feature_vector(conn, student_id, module_id, presentation):
     peak_score  = float(ws_arr.max())
     score_std   = float(ws_arr.std()) if n > 1 else 0.0
     score_slope = float(np.polyfit(range(n), ws_arr, 1)[0]) if n > 1 else 0.0
-
     fv = pd.DataFrame([{
         'code_module':             module_id,
         'highest_education':       highest_education,
@@ -201,7 +179,6 @@ def build_feature_vector(conn, student_id, module_id, presentation):
         'prev_attempts_x_score':   prev_att * score_all,
         'prev_attempts_x_clicks':  prev_att * clicks_total,
     }])[FEATURE_NAMES]
-
     perf_data = {
         'num_assessments': num_assess,
         'avg_score':       score_all,
@@ -213,7 +190,6 @@ def build_feature_vector(conn, student_id, module_id, presentation):
         'window_scores':   ws,
     }
     return fv, perf_data
-
 # ─── توليد التوصيات ───────────────────────────────────────────────────────────
 def generate_recommendations(fv, perf_data):
     recs        = []
@@ -224,45 +200,35 @@ def generate_recommendations(fv, perf_data):
     score_trend = fv['score_trend'].values[0]
     late_subs   = fv['late_submissions'].values[0]
     total_clicks= fv['total_clicks'].values[0]
-
     if num_assess == 0:
         recs.append("⚠️ You haven't submitted any assignments — submit them immediately.")
     elif num_assess < 5:
         recs.append(f"⚠️ Only {int(num_assess)} assignments submitted — try to complete all pending assignments.")
-
     if avg_score < 50 and avg_score > 0:
         recs.append(f"⚠️ Your average score is {avg_score:.1f}% — seek help from your instructor.")
     elif avg_score < 70 and avg_score > 0:
         recs.append(f"📚 Average score is {avg_score:.1f}% — review course materials to improve.")
-
     if active_days < 10:
         recs.append(f"⚠️ Only {int(active_days)} active days on the platform — try to log in daily.")
     elif active_days < 20:
         recs.append(f"📅 {int(active_days)} active days — increase your platform engagement.")
-
     if clicks_late == 0:
         recs.append("⚠️ No activity in the final weeks — the course is still ongoing, stay engaged.")
     elif clicks_late < 50:
         recs.append(f"⚠️ Low activity in final weeks ({int(clicks_late)} clicks) — increase participation.")
-
     if score_trend < -10:
         recs.append(f"📉 Your scores declined in the second half — focus on late assignments.")
-
     if late_subs > 2:
         recs.append(f"⏰ {int(late_subs)} late submissions — manage your time better.")
-
     if total_clicks < 100:
         recs.append("⚠️ Very low platform engagement — explore all course resources.")
-
     if not recs:
         recs.append("✅ Good performance! Keep up your consistent effort.")
     return recs
-
 # ─── SHAP Context ─────────────────────────────────────────────────────────────
 def get_shap_context(feature_label, value, shap_val):
     v       = float(value)
     is_risk = shap_val > 0
-
     contexts = {
         'Late-Stage Activity (wks 29-40)': {
             'risk_ar': f"نشاط منخفض جداً في آخر الفصل ({int(v)} ضغطة فقط)",
@@ -391,13 +357,11 @@ def get_shap_context(feature_label, value, shap_val):
             'safe_en': f"Good average activity per window — {v:.0f} clicks/fortnight",
         },
     }
-
     ctx = contexts.get(feature_label)
     if ctx:
         if is_risk:
             return {'ar': ctx['risk_ar'], 'en': ctx['risk_en']}
         else:
-            # ✅ FIX: لا نعرض protective لو القيمة 0
             if v == 0:
                 return {
                     'ar': "لا توجد بيانات مسجلة لهذا المؤشر",
@@ -420,21 +384,18 @@ def get_shap_context(feature_label, value, shap_val):
                 'ar': f"هذا العامل يحمي من الخطر (القيمة: {v:.1f})",
                 'en': f"This factor reduces risk probability (value: {v:.1f})"
             }
-
 # ─── SHAP Explanation ─────────────────────────────────────────────────────────
 def show_shap_explanation(conn, student_id, module_id, presentation):
     fv, _ = build_feature_vector(conn, student_id, module_id, presentation)
     if fv is None:
         st.warning("Not enough data to explain this prediction.")
         return
-
     shap_vals = explainer.shap_values(fv)
     if isinstance(shap_vals, list):
         sv = np.array(shap_vals[1]).flatten()
     else:
         sv = np.array(shap_vals).flatten()
     sv = sv[:len(FEATURE_NAMES)]
-
     df_shap = pd.DataFrame({
         'Feature':    [FEATURE_LABELS.get(f, f) for f in FEATURE_NAMES],
         'SHAP':       sv,
@@ -443,7 +404,6 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
     })
     df_shap['abs'] = df_shap['SHAP'].abs()
     df_top = df_shap.nlargest(10, 'abs').sort_values('SHAP')
-
     fig, ax = plt.subplots(figsize=(8, 4))
     colors = ['#E24B4A' if v > 0 else '#4CAF50' for v in df_top['SHAP']]
     bars = ax.barh(df_top['Feature'], df_top['SHAP'], color=colors)
@@ -464,17 +424,12 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
-
     top_risk = df_shap[df_shap['SHAP'] > 0.005].nlargest(3, 'SHAP')
-
-    # ✅ FIX: Protective فقط لو القيمة > 0
     top_protect = df_shap[
         (df_shap['SHAP'] < -0.005) &
         (df_shap['Value'] > 0)
     ].nsmallest(3, 'SHAP')
-
     col1, col2 = st.columns(2)
-
     with col1:
         st.markdown("**🔴 Main risk factors:**")
         if not top_risk.empty:
@@ -486,7 +441,6 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
                 st.error(f"**{feat}** = `{val_str}`\n\n{ctx['ar']}\n\n_{ctx['en']}_")
         else:
             st.info("No significant risk factors.")
-
     with col2:
         st.markdown("**🟢 Protective factors:**")
         if not top_protect.empty:
@@ -498,7 +452,6 @@ def show_shap_explanation(conn, student_id, module_id, presentation):
                 st.success(f"**{feat}** = `{val_str}`\n\n{ctx['ar']}\n\n_{ctx['en']}_")
         else:
             st.warning("⚠️ No clear protective factors for this student.")
-
 # ─── Login ────────────────────────────────────────────────────────────────────
 def show_login():
     st.title("Student XAI Portal")
@@ -542,7 +495,6 @@ def show_login():
                     conn.close()
             else:
                 st.warning("Please enter your ID")
-
 # ─── Student Home ─────────────────────────────────────────────────────────────
 def show_student_home():
     conn       = get_db()
@@ -551,28 +503,23 @@ def show_student_home():
     sup_mid    = get_col(conn, 'Supervises', 'module_id')
     hp_sid     = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid     = get_col(conn, 'Has_Prediction', 'module_id')
-
     st.title(f"Welcome, Student {student_id}")
     if st.button("Logout"):
         st.session_state.page = 'login'
         st.rerun()
     st.divider()
     st.subheader("Your Modules")
-
     modules = conn.execute(f"""
         SELECT DISTINCT {sup_mid}, presentation, final_result
         FROM Supervises WHERE {sup_sid} = {student_id}
     """).fetchall()
-
     if not modules:
         st.info("No modules found.")
         conn.close()
         return
-
     for row in modules:
         module_id, presentation, final_result = row
         module_name = 'BBB' if module_id == 0 else 'FFF'
-
         risk_row = conn.execute(f"""
             SELECT longitudinal_risk FROM Has_Prediction
             WHERE {hp_sid} = {student_id}
@@ -581,7 +528,6 @@ def show_student_home():
             AND longitudinal_risk IS NOT NULL
             LIMIT 1
         """).fetchone()
-
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             st.markdown(f"**{module_name}** - {presentation}")
@@ -610,7 +556,6 @@ def show_student_home():
                 st.rerun()
         st.divider()
     conn.close()
-
 # ─── Student Module ───────────────────────────────────────────────────────────
 def show_student_module():
     conn         = get_db()
@@ -620,20 +565,16 @@ def show_student_module():
     module_name  = 'BBB' if module_id == 0 else 'FFF'
     hp_sid       = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid       = get_col(conn, 'Has_Prediction', 'module_id')
-
     if st.button("Back to modules"):
         st.session_state.page = 'student_home'
         st.rerun()
-
     st.title(f"Module: {module_name} - {presentation}")
     st.divider()
-
     fv, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
     if fv is None:
         st.info("No data available for this module.")
         conn.close()
         return
-
     risk_row = conn.execute(f"""
         SELECT longitudinal_risk FROM Has_Prediction
         WHERE {hp_sid} = {student_id}
@@ -643,7 +584,6 @@ def show_student_module():
         LIMIT 1
     """).fetchone()
     risk = risk_row[0] if risk_row else float(model.predict_proba(fv)[0][1])
-
     col1, col2, col3 = st.columns(3)
     with col1:
         risk_badge(risk)
@@ -651,11 +591,9 @@ def show_student_module():
         st.metric("Assignments", int(perf_data['num_assessments']))
     with col3:
         st.metric("Avg Score", f"{perf_data['avg_score']:.1f}%")
-
     st.divider()
     st.subheader("📈 Risk over time")
     st.caption("ℹ️ Risk score per two-week window based on cumulative student data.")
-
     predictions = conn.execute(f"""
         SELECT p.risk_probability, w.window_number FROM Has_Prediction hp
         JOIN Prediction p ON hp.prediction_id = p.prediction_id
@@ -665,7 +603,6 @@ def show_student_module():
         AND hp.presentation = '{presentation}'
         ORDER BY w.window_number
     """).fetchall()
-
     if predictions:
         window_nums = [p[1] for p in predictions]
         risk_vals   = [p[0] for p in predictions]
@@ -684,15 +621,12 @@ def show_student_module():
         plt.tight_layout()
         st.pyplot(fig)
         plt.close()
-
     show_shap_explanation(conn, student_id, module_id, presentation)
-
     st.divider()
     st.subheader("💡 Your Recommendations")
     recs = generate_recommendations(fv, perf_data)
     for rec in recs:
         st.info(rec)
-
     last_pred = conn.execute(f"""
         SELECT p.prediction_id FROM Has_Prediction hp
         JOIN Prediction p ON hp.prediction_id = p.prediction_id
@@ -701,7 +635,6 @@ def show_student_module():
         AND hp.presentation = '{presentation}'
         LIMIT 1
     """).fetchone()
-
     if last_pred:
         doc_recs = conn.execute(f"""
             SELECT dr.rec_text, i.name FROM Doctor_Recommendation dr
@@ -714,7 +647,6 @@ def show_student_module():
                 st.success(rec[0])
                 st.caption(f"From: {rec[1]}")
     conn.close()
-
 # ─── Instructor Home ──────────────────────────────────────────────────────────
 def show_instructor_home():
     conn          = get_db()
@@ -725,41 +657,40 @@ def show_instructor_home():
     sup_mid       = get_col(conn, 'Supervises', 'module_id')
     hp_sid        = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid        = get_col(conn, 'Has_Prediction', 'module_id')
-
     instructor = conn.execute(
         f"SELECT name FROM Instructor WHERE {iid_col} = {instructor_id}"
     ).fetchone()
     name = instructor[0] if instructor else f"Instructor {instructor_id}"
-
     st.title(f"Dashboard - {name}")
     if st.button("Logout"):
         st.session_state.page            = 'login'
         st.session_state.selected_course = None
         st.rerun()
     st.divider()
-
     courses = conn.execute(f"""
         SELECT DISTINCT {sup_mid}, presentation
         FROM Supervises WHERE {sup_iid} = {instructor_id}
         ORDER BY presentation
     """).fetchall()
-
     if not courses:
         st.info("No courses found.")
         conn.close()
         return
-
     if st.session_state.selected_course is None:
         st.subheader("📚 Select a Course")
         st.divider()
         cols = st.columns(min(len(courses), 4))
         for i, (mid, pres) in enumerate(courses):
             module_name = 'BBB' if mid == 0 else 'FFF'
+            # ── FIX: عدد الطلاب من Has_Prediction فقط ──
             count = conn.execute(f"""
-                SELECT COUNT(DISTINCT {sup_sid}) FROM Supervises
-                WHERE {sup_iid} = {instructor_id}
-                AND {sup_mid} = {mid}
-                AND presentation = '{pres}'
+                SELECT COUNT(DISTINCT hp.{hp_sid})
+                FROM Has_Prediction hp
+                JOIN Supervises s ON hp.{hp_sid} = s.{sup_sid}
+                WHERE s.{sup_iid} = {instructor_id}
+                AND hp.{hp_mid} = {mid}
+                AND hp.presentation = '{pres}'
+                AND hp.longitudinal_risk IS NOT NULL
             """).fetchone()[0]
             with cols[i % 4]:
                 st.markdown(f"""
@@ -776,24 +707,19 @@ def show_instructor_home():
                     st.rerun()
         conn.close()
         return
-
     sel_mid, sel_pres = st.session_state.selected_course
     module_name = 'BBB' if sel_mid == 0 else 'FFF'
-
     if st.button("← Back to Courses"):
         st.session_state.selected_course = None
         st.rerun()
-
     st.subheader(f"📚 {module_name} - {sel_pres}")
     st.divider()
-
     students = conn.execute(f"""
         SELECT DISTINCT {sup_sid} FROM Supervises
         WHERE {sup_iid} = {instructor_id}
         AND {sup_mid} = {sel_mid}
         AND presentation = '{sel_pres}'
     """).fetchall()
-
     risk_data = []
     for (sid,) in students:
         risk_row = conn.execute(f"""
@@ -811,23 +737,19 @@ def show_instructor_home():
                 'presentation': sel_pres,
                 'risk':         risk_row[0]
             })
-
     if not risk_data:
         st.info("No predictions available for this course.")
         conn.close()
         return
-
     high   = len([r for r in risk_data if r['risk'] >= 0.7])
     medium = len([r for r in risk_data if 0.5 <= r['risk'] < 0.7])
     safe   = len([r for r in risk_data if r['risk'] < 0.5])
-
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Students", len(risk_data))
     col2.metric("🔴 High Risk",   high)
     col3.metric("🟠 Medium Risk", medium)
     col4.metric("🟢 Safe",        safe)
     st.divider()
-
     filter_opt = st.selectbox("Filter by risk",
                               ["All", "High Risk", "Medium Risk", "Safe"])
     filtered = {
@@ -836,7 +758,6 @@ def show_instructor_home():
         "Safe":        [r for r in risk_data if r['risk'] < 0.5],
     }.get(filter_opt, risk_data)
     filtered = sorted(filtered, key=lambda x: x['risk'], reverse=True)
-
     for row in filtered:
         col1, col2, col3 = st.columns([3, 2, 1])
         with col1:
@@ -857,7 +778,6 @@ def show_instructor_home():
                 st.session_state.page                  = 'instructor_student'
                 st.rerun()
     conn.close()
-
 # ─── Instructor Student ───────────────────────────────────────────────────────
 def show_instructor_student():
     conn         = get_db()
@@ -867,20 +787,16 @@ def show_instructor_student():
     module_name  = 'BBB' if module_id == 0 else 'FFF'
     hp_sid       = get_col(conn, 'Has_Prediction', 'student_id')
     hp_mid       = get_col(conn, 'Has_Prediction', 'module_id')
-
     if st.button("Back to dashboard"):
         st.session_state.page = 'instructor_home'
         st.rerun()
-
     st.title(f"Student {student_id} — {module_name} ({presentation})")
     st.divider()
-
     fv, perf_data = build_feature_vector(conn, student_id, module_id, presentation)
     if fv is None:
         st.info("No data available for this student.")
         conn.close()
         return
-
     risk_row = conn.execute(f"""
         SELECT longitudinal_risk FROM Has_Prediction
         WHERE {hp_sid} = {student_id}
@@ -890,7 +806,6 @@ def show_instructor_student():
         LIMIT 1
     """).fetchone()
     risk = risk_row[0] if risk_row else float(model.predict_proba(fv)[0][1])
-
     sup_sid2 = get_col(conn, 'Supervises', 'student_id')
     sup_mid2 = get_col(conn, 'Supervises', 'module_id')
     final_result_row = conn.execute(f"""
@@ -901,7 +816,6 @@ def show_instructor_student():
         LIMIT 1
     """).fetchone()
     final_result = final_result_row[0] if final_result_row else 'N/A'
-
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         risk_badge(risk)
@@ -922,11 +836,9 @@ def show_instructor_student():
         st.metric("Score Trend", f"{arrow} {trend:+.1f}")
     with col5:
         st.metric("Assignments", int(perf_data['num_assessments']))
-
     st.divider()
     st.subheader("📈 Risk over time")
     st.caption("ℹ️ Risk score per two-week window based on cumulative student data.")
-
     predictions = conn.execute(f"""
         SELECT p.risk_probability, w.window_number FROM Has_Prediction hp
         JOIN Prediction p ON hp.prediction_id = p.prediction_id
@@ -936,7 +848,6 @@ def show_instructor_student():
         AND hp.presentation = '{presentation}'
         ORDER BY w.window_number
     """).fetchall()
-
     if predictions:
         window_nums = [p[1] for p in predictions]
         risk_vals   = [p[0] for p in predictions]
@@ -955,22 +866,18 @@ def show_instructor_student():
         plt.tight_layout()
         st.pyplot(fig)
         plt.close()
-
     st.divider()
     st.subheader("🔍 Why this prediction?")
     st.caption("Factors that most influenced this student's risk score.")
     show_shap_explanation(conn, student_id, module_id, presentation)
-
     st.divider()
     st.subheader("💡 AI Recommendations")
     recs = generate_recommendations(fv, perf_data)
     for rec in recs:
         st.info(rec)
-
     st.divider()
     st.subheader("📝 Add your recommendation")
     note = st.text_area("Write your note", placeholder="Enter your recommendation...")
-
     last_pred = conn.execute(f"""
         SELECT p.prediction_id FROM Has_Prediction hp
         JOIN Prediction p ON hp.prediction_id = p.prediction_id
@@ -979,7 +886,6 @@ def show_instructor_student():
         AND hp.presentation = '{presentation}'
         LIMIT 1
     """).fetchone()
-
     if last_pred:
         pred_id = last_pred[0]
         if st.button("Save recommendation", use_container_width=True):
@@ -995,7 +901,6 @@ def show_instructor_student():
                 st.success("Recommendation saved!")
             else:
                 st.warning("Please write a recommendation first")
-
         doc_recs = conn.execute(f"""
             SELECT rec_text, rec_date FROM Doctor_Recommendation
             WHERE prediction_id = {pred_id}
@@ -1006,7 +911,6 @@ def show_instructor_student():
                 st.success(rec[0])
                 st.caption(f"Date: {rec[1]}")
     conn.close()
-
 # ─── Router ───────────────────────────────────────────────────────────────────
 if st.session_state.page == 'login':
     show_login()
